@@ -1,0 +1,14 @@
+# Third-party skill repos synced alongside official GigaBrain skills.
+#
+# Each entry is cloned/pulled to {data_dir}/third-party-skills/{name}/
+# The skill loader scans these directories and treats them as "official" tier.
+#
+# Fields:
+#   name   - Directory name for the cloned repo (required)
+#   repo   - Git HTTPS URL (required)
+#   branch - Branch to track (default: main)
+
+third_party:
+  - name: lifi-agent-skills
+    repo: https://github.com/lifinance/lifi-agent-skills.git
+    branch: main
