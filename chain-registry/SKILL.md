@@ -18,26 +18,28 @@ metadata:
 
 Look up EVM chain metadata without reading large files. Supports 15+ mainnet chains with curated public RPCs (sourced from chainlist.org).
 
+Resolve `SKILL_DIR` as the directory containing this `SKILL.md`, then run scripts from absolute paths under that directory. Do not rely on the current working directory.
+
 ## Commands
 
 ### Look up a chain by name
 ```bash
-uv run scripts/chain_registry.py lookup --chain base
+uv run "$SKILL_DIR/scripts/chain_registry.py" lookup --chain base
 ```
 
 ### Look up a chain by ID
 ```bash
-uv run scripts/chain_registry.py lookup --chain-id 42161
+uv run "$SKILL_DIR/scripts/chain_registry.py" lookup --chain-id 42161
 ```
 
 ### Get just the RPC URL
 ```bash
-uv run scripts/chain_registry.py rpc --chain ethereum
+uv run "$SKILL_DIR/scripts/chain_registry.py" rpc --chain ethereum
 ```
 
 ### List all supported chains
 ```bash
-uv run scripts/chain_registry.py list
+uv run "$SKILL_DIR/scripts/chain_registry.py" list
 ```
 
 ## Supported Chains
@@ -55,6 +57,6 @@ All commands output JSON to stdout:
 {"success": true, "chain": "base", "chain_id": 8453, "rpc": "https://mainnet.base.org", "native_symbol": "ETH", "native_decimals": 18, "explorer": "https://basescan.org"}
 ```
 
-## Working Directory
+## Path Resolution
 
-All commands must be run from: `skills/chain-registry/`
+`SKILL_DIR` means the directory containing this `SKILL.md`.

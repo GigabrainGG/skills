@@ -3,7 +3,7 @@
 # requires-python = ">=3.11"
 # dependencies = ["httpx"]
 # ///
-"""GigaBrain Intel CLI — queries the Brain API for search, news, and analysis.
+"""GigaBrain Intel CLI — Brain API client for market intelligence and research.
 
 All output is JSON to stdout.
 
@@ -73,8 +73,9 @@ async def cmd_market_analysis(args):
     api_url, api_key = _get_config()
     result = await _query(
         api_url, api_key,
-        f"Give me a concise market analysis for {args.coin}. "
-        f"Include: current price drivers, sentiment, key recent developments, "
+        f"Give me a concise but high-signal market analysis for {args.coin}. "
+        f"Include: current price drivers, market structure, sentiment/positioning, "
+        f"key recent developments, important levels or technical context, catalysts, "
         f"and risk factors. Be specific with data points."
     )
     print(json.dumps(result, default=str))
@@ -93,7 +94,7 @@ def main():
     p = sub.add_parser("ask", help="Ask GigaBrain anything")
     p.add_argument("--question", required=True)
 
-    p = sub.add_parser("market-analysis", help="Market analysis for a coin")
+    p = sub.add_parser("market-analysis", help="High-signal market intelligence summary for a coin")
     p.add_argument("--coin", required=True)
 
     args = parser.parse_args()

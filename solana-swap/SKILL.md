@@ -17,8 +17,10 @@ metadata:
 
 Swap SPL tokens via Jupiter — routes through all major Solana DEXs.
 
+Resolve `SKILL_DIR` as the directory containing this `SKILL.md`, then run scripts from absolute paths under that directory. Do not rely on the current working directory or any injected `CLAUDE_*` skill path variable.
+
 ```
-uv run ${CLAUDE_SKILL_DIR}/scripts/sol_swap.py <command> [args]
+uv run "$SKILL_DIR/scripts/sol_swap.py" <command> [args]
 ```
 
 All commands return JSON to stdout with a `success` field.
@@ -36,19 +38,19 @@ All commands return JSON to stdout with a `success` field.
 
 ### Get Quote
 ```bash
-uv run ${CLAUDE_SKILL_DIR}/scripts/sol_swap.py quote --from SOL --to USDC --amount 1.0
-uv run ${CLAUDE_SKILL_DIR}/scripts/sol_swap.py quote --from SOL --to USDC --amount 1.0 --slippage 1.0
+uv run "$SKILL_DIR/scripts/sol_swap.py" quote --from SOL --to USDC --amount 1.0
+uv run "$SKILL_DIR/scripts/sol_swap.py" quote --from SOL --to USDC --amount 1.0 --slippage 1.0
 ```
 
 ### Execute Swap
 ```bash
-uv run ${CLAUDE_SKILL_DIR}/scripts/sol_swap.py swap --from SOL --to USDC --amount 1.0 --slippage 0.5
+uv run "$SKILL_DIR/scripts/sol_swap.py" swap --from SOL --to USDC --amount 1.0 --slippage 0.5
 ```
 
 ### Token Price
 ```bash
-uv run ${CLAUDE_SKILL_DIR}/scripts/sol_swap.py price --token SOL
-uv run ${CLAUDE_SKILL_DIR}/scripts/sol_swap.py price --token <mint_address>
+uv run "$SKILL_DIR/scripts/sol_swap.py" price --token SOL
+uv run "$SKILL_DIR/scripts/sol_swap.py" price --token <mint_address>
 ```
 
 ## Well-Known Tokens

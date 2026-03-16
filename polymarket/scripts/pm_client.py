@@ -17,6 +17,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import sys
 
 # Add scripts directory to path for co-located imports
@@ -30,6 +31,11 @@ def _get_client():
     return PMClient(
         private_key=os.environ.get("EVM_PRIVATE_KEY", ""),
         funder_address=os.environ.get("EVM_WALLET_ADDRESS", ""),
+        builder_api_key=os.environ.get("POLY_BUILDER_API_KEY", ""),
+        builder_secret=os.environ.get("POLY_BUILDER_SECRET", ""),
+        builder_passphrase=os.environ.get("POLY_BUILDER_PASSPHRASE", ""),
+        builder_signer_url=os.environ.get("POLY_BUILDER_SIGNER_URL", ""),
+        builder_signer_token=os.environ.get("POLY_BUILDER_SIGNER_TOKEN", ""),
     )
 
 
@@ -37,9 +43,30 @@ def _out(data):
     print(json.dumps(data, default=str))
 
 
+def _parse_jsonish(value):
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return value
+    return value
+
+
+def _parse_tristate_bool(value: str | None) -> bool | None:
+    if value is None or value == "any":
+        return None
+    if value == "true":
+        return True
+    if value == "false":
+        return False
+    raise ValueError(f"Unsupported boolean selector: {value}")
+
+
 def _format_market(m) -> dict:
     """Convert Market model to a clean dict for JSON output."""
     return {
+        "slug": m.slug or m.market_slug,
+        "market_slug": m.market_slug,
         "question": m.question,
         "yes_price": m.yes_price,
         "volume": m.volume_24hr or m.volume_num or m.volume or 0,
@@ -55,6 +82,209 @@ def _format_market(m) -> dict:
     }
 
 
+def _format_candidate(m) -> dict:
+    data = _format_market(m)
+    data["outcomes"] = m.outcomes or [t.outcome for t in (m.tokens or [])]
+    data["condition_id"] = m.condition_id
+    return data
+
+
+def _format_public_market(raw_market: dict) -> dict:
+    return {
+        "id": raw_market.get("id"),
+        "slug": raw_market.get("slug") or raw_market.get("marketSlug"),
+        "question": raw_market.get("question") or raw_market.get("title") or "",
+        "condition_id": raw_market.get("conditionId"),
+        "active": raw_market.get("active"),
+        "closed": raw_market.get("closed"),
+        "archived": raw_market.get("archived"),
+        "accepting_orders": raw_market.get("acceptingOrders"),
+        "ready": raw_market.get("ready"),
+        "yes_price": raw_market.get("lastTradePrice"),
+        "best_bid": raw_market.get("bestBid"),
+        "best_ask": raw_market.get("bestAsk"),
+        "spread": raw_market.get("spread"),
+        "volume": raw_market.get("volume24hr") or raw_market.get("volume") or 0,
+        "liquidity": raw_market.get("liquidityClob") or raw_market.get("liquidity") or 0,
+        "comment_count": raw_market.get("commentCount"),
+        "open_interest": raw_market.get("openInterest"),
+        "outcomes": _parse_jsonish(raw_market.get("outcomes")),
+        "token_ids": _parse_jsonish(raw_market.get("clobTokenIds")),
+    }
+
+
+def _format_public_event(event: dict, market_limit: int = 3) -> dict:
+    return {
+        "id": event.get("id"),
+        "slug": event.get("slug"),
+        "title": event.get("title") or event.get("question") or event.get("slug") or "",
+        "description": event.get("description"),
+        "active": event.get("active"),
+        "closed": event.get("closed"),
+        "archived": event.get("archived"),
+        "volume": event.get("volume24hr") or event.get("volume") or 0,
+        "liquidity": event.get("liquidityClob") or event.get("liquidity") or 0,
+        "open_interest": event.get("openInterest"),
+        "comment_count": event.get("commentCount"),
+        "end_date": event.get("endDate"),
+        "markets": [_format_public_market(market) for market in (event.get("markets") or [])[:market_limit]],
+    }
+
+
+def _normalize_selector(value: str | None) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", (value or "").lower()).strip()
+
+
+async def _resolve_market(client, query: str | None, outcome: str | None, market_slug: str | None):
+    search_query = market_slug or query
+    if not search_query:
+        return None, {
+            "success": False,
+            "error": "Provide --query or --market-slug",
+        }
+
+    markets = await client.search_markets(search_query, limit=8)
+    if not markets:
+        selector = market_slug or query
+        return None, {
+            "success": False,
+            "error": f"No markets found for '{selector}'",
+        }
+
+    if market_slug:
+        slug_matches = [
+            m for m in markets
+            if _normalize_selector(m.slug) == _normalize_selector(market_slug)
+            or _normalize_selector(m.market_slug) == _normalize_selector(market_slug)
+        ]
+        if not slug_matches:
+            return None, {
+                "success": False,
+                "error": f"No market matched slug '{market_slug}'",
+                "candidates": [_format_candidate(m) for m in markets[:5]],
+            }
+        markets = slug_matches
+
+    if query:
+        exact_matches = [
+            m for m in markets
+            if _normalize_selector(m.question) == _normalize_selector(query)
+            or _normalize_selector(m.slug) == _normalize_selector(query)
+            or _normalize_selector(m.market_slug) == _normalize_selector(query)
+        ]
+        if len(exact_matches) == 1:
+            markets = exact_matches
+        elif len(exact_matches) > 1:
+            markets = exact_matches
+
+    if outcome:
+        outcome_matches = [m for m in markets if m.get_token_id(outcome)]
+        if not outcome_matches:
+            return None, {
+                "success": False,
+                "error": f"Outcome '{outcome}' not found in any matching market",
+                "candidates": [_format_candidate(m) for m in markets[:5]],
+            }
+        markets = outcome_matches
+
+    if len(markets) != 1:
+        return None, {
+            "success": False,
+            "error": "Ambiguous market selection. Use `resolve` first and rerun with --market-slug.",
+            "candidates": [_format_candidate(m) for m in markets[:5]],
+        }
+
+    return markets[0], None
+
+
+async def cmd_events(args):
+    from pm_services import Market
+
+    client = _get_client()
+    events = await client.get_events(query=args.query, limit=args.limit, tag=args.tag)
+
+    formatted = []
+    for event in events:
+        event_markets = []
+        for raw_market in (event.get("markets") or [])[: args.market_limit]:
+            try:
+                event_markets.append(_format_market(Market.model_validate(raw_market)))
+            except Exception:
+                event_markets.append({
+                    "slug": raw_market.get("slug") or raw_market.get("marketSlug"),
+                    "question": raw_market.get("question") or raw_market.get("title") or "",
+                    "yes_price": raw_market.get("yesPrice"),
+                    "volume": raw_market.get("volume24hr") or raw_market.get("volume") or 0,
+                    "liquidity": raw_market.get("liquidity") or 0,
+                    "end_date": raw_market.get("endDate") or raw_market.get("resolutionDate"),
+                    "category": raw_market.get("category"),
+                    "neg_risk": raw_market.get("negRisk", False),
+                    "outcomes": raw_market.get("outcomes") or [],
+                    "tokens": [],
+                })
+
+        formatted.append({
+            "id": event.get("id"),
+            "slug": event.get("slug"),
+            "title": event.get("title") or event.get("question") or event.get("slug") or "",
+            "description": event.get("description"),
+            "volume": event.get("volume24hr") or event.get("volume") or 0,
+            "liquidity": event.get("liquidity") or 0,
+            "end_date": event.get("endDate") or event.get("resolutionDate"),
+            "category": event.get("category"),
+            "markets": event_markets,
+        })
+
+    _out({"success": True, "events": formatted})
+
+
+async def cmd_events_raw(args):
+    client = _get_client()
+    events = await client.raw_events(
+        query=args.query,
+        limit=args.limit,
+        active=_parse_tristate_bool(args.active),
+        closed=_parse_tristate_bool(args.closed),
+        archived=_parse_tristate_bool(args.archived),
+        tag=args.tag,
+        order=args.order,
+        ascending=_parse_tristate_bool(args.ascending),
+    )
+    _out({
+        "success": True,
+        "source": "gamma/events",
+        "request": {
+            "query": args.query,
+            "limit": args.limit,
+            "active": _parse_tristate_bool(args.active),
+            "closed": _parse_tristate_bool(args.closed),
+            "archived": _parse_tristate_bool(args.archived),
+            "tag": args.tag,
+            "order": args.order,
+            "ascending": _parse_tristate_bool(args.ascending),
+        },
+        "events": events,
+    })
+
+
+async def cmd_resolve(args):
+    client = _get_client()
+    market, error = await _resolve_market(
+        client,
+        query=args.query,
+        outcome=args.outcome,
+        market_slug=args.market_slug,
+    )
+    if market:
+        _out({"success": True, "resolved": True, "market": _format_candidate(market)})
+        return
+
+    payload = dict(error or {})
+    payload.setdefault("success", True)
+    payload["resolved"] = False
+    _out(payload)
+
+
 async def cmd_search(args):
     client = _get_client()
     if args.tag:
@@ -62,6 +292,57 @@ async def cmd_search(args):
     else:
         markets = await client.search_markets(args.query, limit=args.limit)
     _out({"success": True, "markets": [_format_market(m) for m in markets]})
+
+
+async def cmd_markets_raw(args):
+    client = _get_client()
+    markets = await client.raw_markets(
+        query=args.query,
+        limit=args.limit,
+        active=_parse_tristate_bool(args.active),
+        closed=_parse_tristate_bool(args.closed),
+        archived=_parse_tristate_bool(args.archived),
+        tag=args.tag,
+        sort_by=args.order,
+        ascending=_parse_tristate_bool(args.ascending),
+    )
+    _out({
+        "success": True,
+        "source": "gamma/markets",
+        "request": {
+            "query": args.query,
+            "limit": args.limit,
+            "active": _parse_tristate_bool(args.active),
+            "closed": _parse_tristate_bool(args.closed),
+            "archived": _parse_tristate_bool(args.archived),
+            "tag": args.tag,
+            "order": args.order,
+            "ascending": _parse_tristate_bool(args.ascending),
+        },
+        "markets": markets,
+    })
+
+
+async def cmd_public_search(args):
+    client = _get_client()
+    results = await client.public_search(args.query, limit=args.limit)
+    _out({
+        "success": True,
+        "events": [_format_public_event(event, market_limit=args.market_limit) for event in results.get("events", [])],
+        "pagination": results.get("pagination"),
+        "inactive_match_count": results.get("inactive_match_count", 0),
+    })
+
+
+async def cmd_public_search_raw(args):
+    client = _get_client()
+    results = await client.raw_public_search(args.query, limit=args.limit)
+    _out({
+        "success": True,
+        "source": "gamma/public-search",
+        "request": {"query": args.query, "limit": args.limit},
+        "results": results,
+    })
 
 
 async def cmd_trending(args):
@@ -101,13 +382,16 @@ async def cmd_odds(args):
 
 async def cmd_orderbook(args):
     client = _get_client()
-    # Resolve token_id from query + outcome
-    markets = await client.search_markets(args.query, limit=3)
-    if not markets:
-        _out({"success": False, "error": f"No markets found for '{args.query}'"})
+    market, error = await _resolve_market(
+        client,
+        query=args.query,
+        outcome=args.outcome,
+        market_slug=args.market_slug,
+    )
+    if error:
+        _out(error)
         return
 
-    market = markets[0]
     token_id = market.get_token_id(args.outcome)
     if not token_id:
         available = market.outcomes or ([t.outcome for t in market.tokens] if market.tokens else [])
@@ -117,14 +401,85 @@ async def cmd_orderbook(args):
     book = client.get_orderbook(token_id)
     midpoint = client.get_midpoint(token_id)
     spread = client.get_spread(token_id)
-    _out({
+    payload = {
         "success": True,
         "market": market.question,
         "outcome": args.outcome,
+        "token_id": token_id,
         "midpoint": midpoint,
         "spread": spread,
-        "bids": (book.get("bids") or [])[:args.depth],
-        "asks": (book.get("asks") or [])[:args.depth],
+    }
+    if args.raw:
+        payload["orderbook"] = book
+    else:
+        payload["bids"] = (book.get("bids") or [])[:args.depth]
+        payload["asks"] = (book.get("asks") or [])[:args.depth]
+    _out(payload)
+
+
+async def cmd_price_history(args):
+    client = _get_client()
+    token_id = args.token_id
+    market = None
+    if not token_id:
+        market, error = await _resolve_market(
+            client,
+            query=args.query,
+            outcome=args.outcome,
+            market_slug=args.market_slug,
+        )
+        if error:
+            _out(error)
+            return
+
+        token_id = market.get_token_id(args.outcome)
+        if not token_id:
+            available = market.outcomes or ([t.outcome for t in market.tokens] if market.tokens else [])
+            _out({"success": False, "error": f"Outcome '{args.outcome}' not found. Available: {available}"})
+            return
+
+    history = await client.get_price_history(
+        token_id,
+        interval=None if args.start_ts is not None or args.end_ts is not None else args.interval,
+        fidelity=args.fidelity,
+        start_ts=args.start_ts,
+        end_ts=args.end_ts,
+    )
+    payload = {
+        "success": True,
+        "token_id": token_id,
+        "market": market.question if market else None,
+        "outcome": args.outcome if market else None,
+    }
+    if args.raw:
+        payload["response"] = history
+    else:
+        payload["history"] = history.get("history", [])
+    _out(payload)
+
+
+async def cmd_market_trades(args):
+    client = _get_client()
+    condition_id = args.condition_id
+    market = None
+    if not condition_id:
+        market, error = await _resolve_market(
+            client,
+            query=args.query,
+            outcome=args.outcome,
+            market_slug=args.market_slug,
+        )
+        if error:
+            _out(error)
+            return
+        condition_id = market.condition_id
+
+    payload = await client.get_market_trades_events(condition_id, limit=args.limit)
+    _out({
+        "success": True,
+        "condition_id": condition_id,
+        "market": market.question if market else None,
+        "trades": payload,
     })
 
 
@@ -134,12 +489,16 @@ async def cmd_buy(args):
         _out({"success": False, "error": "Trading not configured. Set EVM_PRIVATE_KEY and EVM_WALLET_ADDRESS."})
         return
 
-    markets = await client.search_markets(args.query, limit=5)
-    if not markets:
-        _out({"success": False, "error": f"No markets found for '{args.query}'"})
+    market, error = await _resolve_market(
+        client,
+        query=args.query,
+        outcome=args.outcome,
+        market_slug=args.market_slug,
+    )
+    if error:
+        _out(error)
         return
 
-    market = markets[0]
     token_id = market.get_token_id(args.outcome)
     if not token_id:
         available = market.outcomes or ([t.outcome for t in market.tokens] if market.tokens else [])
@@ -147,10 +506,17 @@ async def cmd_buy(args):
         return
 
     if args.market_order:
-        order_id = client.market_buy(token_id=token_id, amount_usd=args.amount_usd, neg_risk=market.neg_risk)
+        order_id = client.market_buy(
+            token_id=token_id,
+            amount_usd=args.amount_usd,
+            neg_risk=market.neg_risk,
+            order_type=args.market_tif,
+        )
         _out({
             "success": True, "action": "market_buy", "market": market.question,
             "outcome": args.outcome, "amount_usd": args.amount_usd, "order_id": order_id,
+            "time_in_force": args.market_tif,
+            "builder": client.get_builder_status(),
         })
     else:
         if not args.price:
@@ -159,12 +525,24 @@ async def cmd_buy(args):
         if not (0.01 <= args.price <= 0.99):
             _out({"success": False, "error": "Price must be between 0.01 and 0.99"})
             return
+        if args.time_in_force == "GTD" and not args.expire_seconds:
+            _out({"success": False, "error": "GTD orders require --expire-seconds"})
+            return
         shares = args.amount_usd / args.price
-        order_id = client.buy(token_id=token_id, price=args.price, size=shares, neg_risk=market.neg_risk)
+        order_id = client.buy(
+            token_id=token_id,
+            price=args.price,
+            size=shares,
+            neg_risk=market.neg_risk,
+            order_type=args.time_in_force,
+            expire_seconds=args.expire_seconds,
+        )
         _out({
             "success": True, "action": "limit_buy", "market": market.question,
             "outcome": args.outcome, "price": args.price,
             "shares": round(shares, 2), "cost_usd": args.amount_usd, "order_id": order_id,
+            "time_in_force": args.time_in_force,
+            "builder": client.get_builder_status(),
         })
 
 
@@ -174,27 +552,58 @@ async def cmd_sell(args):
         _out({"success": False, "error": "Trading not configured. Set EVM_PRIVATE_KEY and EVM_WALLET_ADDRESS."})
         return
 
-    if not (0.01 <= args.price <= 0.99):
-        _out({"success": False, "error": "Price must be between 0.01 and 0.99"})
+    market, error = await _resolve_market(
+        client,
+        query=args.query,
+        outcome=args.outcome,
+        market_slug=args.market_slug,
+    )
+    if error:
+        _out(error)
         return
 
-    markets = await client.search_markets(args.query, limit=5)
-    if not markets:
-        _out({"success": False, "error": f"No markets found for '{args.query}'"})
-        return
-
-    market = markets[0]
     token_id = market.get_token_id(args.outcome)
     if not token_id:
         available = market.outcomes or ([t.outcome for t in market.tokens] if market.tokens else [])
         _out({"success": False, "error": f"Outcome '{args.outcome}' not found. Available: {available}"})
         return
 
-    order_id = client.sell(token_id=token_id, price=args.price, size=args.shares, neg_risk=market.neg_risk)
+    if args.market_order:
+        order_id = client.market_sell(
+            token_id=token_id,
+            shares=args.shares,
+            neg_risk=market.neg_risk,
+            order_type=args.market_tif,
+        )
+        _out({
+            "success": True, "action": "market_sell", "market": market.question,
+            "outcome": args.outcome, "shares": args.shares, "order_id": order_id,
+            "time_in_force": args.market_tif,
+            "builder": client.get_builder_status(),
+        })
+        return
+
+    if not args.price or not (0.01 <= args.price <= 0.99):
+        _out({"success": False, "error": "Limit sells require --price between 0.01 and 0.99"})
+        return
+    if args.time_in_force == "GTD" and not args.expire_seconds:
+        _out({"success": False, "error": "GTD orders require --expire-seconds"})
+        return
+
+    order_id = client.sell(
+        token_id=token_id,
+        price=args.price,
+        size=args.shares,
+        neg_risk=market.neg_risk,
+        order_type=args.time_in_force,
+        expire_seconds=args.expire_seconds,
+    )
     _out({
         "success": True, "action": "limit_sell", "market": market.question,
         "outcome": args.outcome, "price": args.price,
         "shares": args.shares, "proceeds_usd": round(args.shares * args.price, 2), "order_id": order_id,
+        "time_in_force": args.time_in_force,
+        "builder": client.get_builder_status(),
     })
 
 
@@ -213,6 +622,10 @@ async def cmd_positions(args):
         _out({"success": False, "error": "Trading not configured. Set EVM_PRIVATE_KEY and EVM_WALLET_ADDRESS."})
         return
     positions = await client.get_positions()
+    if args.raw:
+        _out({"success": True, "positions": positions})
+        return
+
     formatted = []
     for p in positions:
         size = float(p.get("size", 0))
@@ -247,7 +660,7 @@ async def cmd_my_orders(args):
     if not client.has_trading:
         _out({"success": False, "error": "Trading not configured. Set EVM_PRIVATE_KEY and EVM_WALLET_ADDRESS."})
         return
-    orders = client.get_open_orders()
+    orders = client.get_open_orders_raw() if args.raw else client.get_open_orders()
     _out({"success": True, "orders": orders})
 
 
@@ -277,6 +690,103 @@ async def cmd_check_order(args):
     _out(info)
 
 
+async def cmd_builder_status(args):
+    client = _get_client()
+    _out({"success": True, "builder": client.get_builder_status()})
+
+
+async def cmd_builder_trades(args):
+    client = _get_client()
+    trades = client.get_builder_trades(
+        market=args.market,
+        asset_id=args.asset_id,
+        maker_address=args.maker_address,
+        before=args.before,
+        after=args.after,
+    )
+    _out({"success": True, "builder": client.get_builder_status(), "trades": trades[: args.limit]})
+
+
+async def cmd_fund_assets(args):
+    client = _get_client()
+    assets = await client.get_supported_bridge_assets()
+    if args.chain_id:
+        assets = [asset for asset in assets if asset.get("chainId") == args.chain_id]
+    if args.symbol:
+        assets = [asset for asset in assets if (asset.get("token") or {}).get("symbol", "").lower() == args.symbol.lower()]
+    _out({"success": True, "supported_assets": assets[: args.limit]})
+
+
+async def cmd_fund_quote(args):
+    client = _get_client()
+    recipient_address = args.recipient_address or os.environ.get("EVM_WALLET_ADDRESS", "")
+    if not recipient_address:
+        _out({"success": False, "error": "Provide --recipient-address or set EVM_WALLET_ADDRESS"})
+        return
+
+    quote = await client.get_bridge_quote(
+        from_chain_id=args.from_chain_id,
+        from_token_address=args.from_token_address,
+        recipient_address=recipient_address,
+        to_chain_id=args.to_chain_id,
+        to_token_address=args.to_token_address,
+        from_amount_base_unit=args.from_amount_base_unit,
+    )
+    _out({"success": True, "recipient_address": recipient_address, "quote": quote})
+
+
+async def cmd_fund_address(args):
+    client = _get_client()
+    address = args.address or os.environ.get("EVM_WALLET_ADDRESS", "")
+    if not address:
+        _out({"success": False, "error": "Provide --address or set EVM_WALLET_ADDRESS"})
+        return
+
+    deposit_address = await client.get_bridge_deposit_address(address)
+    _out({"success": True, "recipient_address": address, "deposit_address": deposit_address})
+
+
+async def cmd_fund_status(args):
+    client = _get_client()
+    transactions = await client.get_bridge_status(args.deposit_address)
+    _out({"success": True, "deposit_address": args.deposit_address, "transactions": transactions})
+
+
+async def cmd_geoblock(args):
+    client = _get_client()
+    result = await client.get_geoblock(ip=args.ip)
+    result["success"] = True
+    _out(result)
+
+
+async def cmd_readiness(args):
+    client = _get_client()
+    geoblock = await client.get_geoblock(ip=args.ip)
+    builder = client.get_builder_status()
+    balance = client.get_usdc_balance() if client.has_trading else None
+
+    if geoblock.get("blocked"):
+        next_action = "Trading blocked in this geography. Stop before placing orders."
+    elif not client.has_trading:
+        next_action = "Configure EVM_PRIVATE_KEY and EVM_WALLET_ADDRESS to enable trading."
+    elif balance is not None and balance <= 0:
+        next_action = "Get a bridge quote or deposit address, fund the wallet, then re-run readiness."
+    elif not builder.get("can_builder_auth"):
+        next_action = "Trading is possible, but builder attribution is disabled. Configure builder credentials for leaderboard credit."
+    else:
+        next_action = "Ready for one-shot research and trading."
+
+    _out({
+        "success": True,
+        "wallet_address": os.environ.get("EVM_WALLET_ADDRESS"),
+        "trading_configured": client.has_trading,
+        "usdc_balance": balance,
+        "builder": builder,
+        "geoblock": geoblock,
+        "next_action": next_action,
+    })
+
+
 def main():
     parser = argparse.ArgumentParser(description="Polymarket CLI")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -287,6 +797,46 @@ def main():
     p.add_argument("--limit", type=int, default=10)
     p.add_argument("--tag", default=None, help="Filter by tag (crypto, politics, sports, etc.)")
 
+    # markets-raw
+    p = sub.add_parser("markets-raw", help="Raw Gamma market search/list response")
+    p.add_argument("--query", default=None)
+    p.add_argument("--limit", type=int, default=10)
+    p.add_argument("--active", default="true", choices=["true", "false", "any"])
+    p.add_argument("--closed", default="false", choices=["true", "false", "any"])
+    p.add_argument("--archived", default="false", choices=["true", "false", "any"])
+    p.add_argument("--tag", default=None, help="Filter by tag (crypto, politics, sports, etc.)")
+    p.add_argument("--order", default="volume24hr", help="Gamma sort field")
+    p.add_argument("--ascending", default="false", choices=["true", "false", "any"])
+
+    # public-search
+    p = sub.add_parser("public-search", help="Search events via Polymarket public-search")
+    p.add_argument("--query", required=True)
+    p.add_argument("--limit", type=int, default=10)
+    p.add_argument("--market-limit", type=int, default=3)
+
+    # public-search-raw
+    p = sub.add_parser("public-search-raw", help="Raw Polymarket public-search response")
+    p.add_argument("--query", required=True)
+    p.add_argument("--limit", type=int, default=10)
+
+    # events
+    p = sub.add_parser("events", help="Search Polymarket events")
+    p.add_argument("--query", default=None)
+    p.add_argument("--limit", type=int, default=10)
+    p.add_argument("--tag", default=None, help="Filter by tag (crypto, politics, sports, etc.)")
+    p.add_argument("--market-limit", type=int, default=3, help="Markets to include per event")
+
+    # events-raw
+    p = sub.add_parser("events-raw", help="Raw Gamma event search/list response")
+    p.add_argument("--query", default=None)
+    p.add_argument("--limit", type=int, default=10)
+    p.add_argument("--active", default="true", choices=["true", "false", "any"])
+    p.add_argument("--closed", default="false", choices=["true", "false", "any"])
+    p.add_argument("--archived", default="false", choices=["true", "false", "any"])
+    p.add_argument("--tag", default=None, help="Filter by tag (crypto, politics, sports, etc.)")
+    p.add_argument("--order", default="volume24hr", help="Gamma sort field")
+    p.add_argument("--ascending", default="false", choices=["true", "false", "any"])
+
     # trending
     p = sub.add_parser("trending", help="Trending markets")
     p.add_argument("--limit", type=int, default=10)
@@ -296,39 +846,78 @@ def main():
     p = sub.add_parser("odds", help="Get odds for a specific event")
     p.add_argument("--query", required=True)
 
+    # resolve
+    p = sub.add_parser("resolve", help="Resolve a query to a unique market or a candidate list")
+    p.add_argument("--query", default=None, help="Market search query")
+    p.add_argument("--market-slug", default=None, help="Exact market slug")
+    p.add_argument("--outcome", default=None, help="Optional outcome to narrow candidates")
+
     # orderbook
     p = sub.add_parser("orderbook", help="Get order book depth")
-    p.add_argument("--query", required=True, help="Market search query")
+    p.add_argument("--query", default=None, help="Market search query")
+    p.add_argument("--market-slug", default=None, help="Exact market slug from `resolve`")
     p.add_argument("--outcome", default="Yes", help="Outcome (Yes/No)")
     p.add_argument("--depth", type=int, default=10, help="Number of levels")
+    p.add_argument("--raw", action="store_true", help="Return the full upstream orderbook payload")
+
+    # price-history
+    p = sub.add_parser("price-history", help="Get price history for a market outcome token")
+    p.add_argument("--query", default=None, help="Market search query")
+    p.add_argument("--market-slug", default=None, help="Exact market slug from `resolve`")
+    p.add_argument("--outcome", default="Yes", help="Outcome used to resolve token id")
+    p.add_argument("--token-id", default=None, help="Direct token id override")
+    p.add_argument("--interval", default="1w", help="Range shorthand, e.g. 1d, 1w, 1m, max")
+    p.add_argument("--fidelity", type=int, default=None, help="Sampling fidelity required by some ranges")
+    p.add_argument("--start-ts", type=int, default=None, help="Explicit start timestamp (unix seconds)")
+    p.add_argument("--end-ts", type=int, default=None, help="Explicit end timestamp (unix seconds)")
+    p.add_argument("--raw", action="store_true", help="Return the full upstream price-history response")
+
+    # market-trades
+    p = sub.add_parser("market-trades", help="Get market trade events")
+    p.add_argument("--condition-id", default=None, help="Direct condition id override")
+    p.add_argument("--query", default=None, help="Market search query")
+    p.add_argument("--market-slug", default=None, help="Exact market slug from `resolve`")
+    p.add_argument("--outcome", default="Yes")
+    p.add_argument("--limit", type=int, default=20)
 
     # buy
     p = sub.add_parser("buy", help="Buy outcome shares")
-    p.add_argument("--query", required=True, help="Market search query")
+    p.add_argument("--query", default=None, help="Market search query")
+    p.add_argument("--market-slug", default=None, help="Exact market slug from `resolve`")
     p.add_argument("--outcome", required=True, help="Outcome to buy (e.g. Yes, No)")
     p.add_argument("--price", type=float, default=None, help="Limit price 0.01-0.99 (omit for market order)")
     p.add_argument("--amount-usd", type=float, required=True, help="USD amount to spend")
     p.add_argument("--market-order", action="store_true", help="Use FOK market order instead of limit")
+    p.add_argument("--market-tif", default="FOK", choices=["FOK", "FAK"], help="Time in force for market orders")
+    p.add_argument("--time-in-force", default="GTC", choices=["GTC", "FAK", "GTD"], help="Time in force for limit orders")
+    p.add_argument("--expire-seconds", type=int, default=None, help="Required for GTD orders")
 
     # sell
     p = sub.add_parser("sell", help="Sell outcome shares")
-    p.add_argument("--query", required=True, help="Market search query")
+    p.add_argument("--query", default=None, help="Market search query")
+    p.add_argument("--market-slug", default=None, help="Exact market slug from `resolve`")
     p.add_argument("--outcome", required=True, help="Outcome to sell")
-    p.add_argument("--price", type=float, required=True, help="Limit price 0.01-0.99")
+    p.add_argument("--price", type=float, default=None, help="Limit price 0.01-0.99")
     p.add_argument("--shares", type=float, required=True, help="Number of shares to sell")
+    p.add_argument("--market-order", action="store_true", help="Sell immediately at available book prices")
+    p.add_argument("--market-tif", default="FOK", choices=["FOK", "FAK"], help="Time in force for market sells")
+    p.add_argument("--time-in-force", default="GTC", choices=["GTC", "FAK", "GTD"], help="Time in force for limit sells")
+    p.add_argument("--expire-seconds", type=int, default=None, help="Required for GTD orders")
 
     # balance
     sub.add_parser("balance", help="Check USDC.e balance (trading-ready)")
 
     # positions
-    sub.add_parser("positions", help="View current positions and P&L")
+    p = sub.add_parser("positions", help="View current positions and P&L")
+    p.add_argument("--raw", action="store_true", help="Return the raw positions payload from Polymarket")
 
     # trades
     p = sub.add_parser("trades", help="View recent trade history")
     p.add_argument("--limit", type=int, default=20)
 
     # my-orders
-    sub.add_parser("my-orders", help="List open orders")
+    p = sub.add_parser("my-orders", help="List open orders")
+    p.add_argument("--raw", action="store_true", help="Return the raw open-order payload from the CLOB client")
 
     # cancel-order
     p = sub.add_parser("cancel-order", help="Cancel orders")
@@ -339,13 +928,64 @@ def main():
     p = sub.add_parser("check-order", help="Check order fill status")
     p.add_argument("--order-id", required=True)
 
+    # builder-status
+    sub.add_parser("builder-status", help="Check builder attribution status")
+
+    # builder-trades
+    p = sub.add_parser("builder-trades", help="List trades attributed to the configured builder")
+    p.add_argument("--market", default=None, help="Condition id filter used by builder trades API")
+    p.add_argument("--asset-id", default=None, help="Token id filter")
+    p.add_argument("--maker-address", default=None)
+    p.add_argument("--before", type=int, default=None)
+    p.add_argument("--after", type=int, default=None)
+    p.add_argument("--limit", type=int, default=50)
+
+    # fund-assets
+    p = sub.add_parser("fund-assets", help="List bridge-supported assets for Polymarket funding")
+    p.add_argument("--chain-id", default=None, help="Optional chain id filter")
+    p.add_argument("--symbol", default=None, help="Optional token symbol filter")
+    p.add_argument("--limit", type=int, default=50)
+
+    # fund-quote
+    p = sub.add_parser("fund-quote", help="Get a bridge quote into Polymarket-compatible USDC.e")
+    p.add_argument("--from-chain-id", required=True)
+    p.add_argument("--from-token-address", required=True)
+    p.add_argument("--from-amount-base-unit", required=True, help="Raw token amount in base units")
+    p.add_argument("--to-chain-id", default="137")
+    p.add_argument("--to-token-address", default="0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174")
+    p.add_argument("--recipient-address", default=None, help="Defaults to EVM_WALLET_ADDRESS")
+
+    # fund-address
+    p = sub.add_parser("fund-address", help="Create bridge deposit addresses for a wallet")
+    p.add_argument("--address", default=None, help="Defaults to EVM_WALLET_ADDRESS")
+
+    # fund-status
+    p = sub.add_parser("fund-status", help="Check bridge transaction status for a deposit address")
+    p.add_argument("--deposit-address", required=True)
+
+    # geoblock
+    p = sub.add_parser("geoblock", help="Check whether the current IP is geographically blocked")
+    p.add_argument("--ip", default=None, help="Optional IP override if the endpoint supports it")
+
+    # readiness
+    p = sub.add_parser("readiness", help="One-shot readiness check: geography, balance, and builder attribution")
+    p.add_argument("--ip", default=None, help="Optional IP override if the endpoint supports it")
+
     args = parser.parse_args()
 
     handler = {
+        "events": cmd_events,
+        "events-raw": cmd_events_raw,
         "search": cmd_search,
+        "markets-raw": cmd_markets_raw,
+        "public-search": cmd_public_search,
+        "public-search-raw": cmd_public_search_raw,
         "trending": cmd_trending,
         "odds": cmd_odds,
+        "resolve": cmd_resolve,
         "orderbook": cmd_orderbook,
+        "price-history": cmd_price_history,
+        "market-trades": cmd_market_trades,
         "buy": cmd_buy,
         "sell": cmd_sell,
         "balance": cmd_balance,
@@ -354,6 +994,14 @@ def main():
         "my-orders": cmd_my_orders,
         "cancel-order": cmd_cancel_order,
         "check-order": cmd_check_order,
+        "builder-status": cmd_builder_status,
+        "builder-trades": cmd_builder_trades,
+        "fund-assets": cmd_fund_assets,
+        "fund-quote": cmd_fund_quote,
+        "fund-address": cmd_fund_address,
+        "fund-status": cmd_fund_status,
+        "geoblock": cmd_geoblock,
+        "readiness": cmd_readiness,
     }[args.command]
 
     try:

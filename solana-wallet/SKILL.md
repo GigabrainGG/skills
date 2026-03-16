@@ -15,8 +15,10 @@ metadata:
 
 Manage Solana wallets — balances, transfers, token info.
 
+Resolve `SKILL_DIR` as the directory containing this `SKILL.md`, then run scripts from absolute paths under that directory. Do not rely on the current working directory or any injected `CLAUDE_*` skill path variable.
+
 ```
-uv run ${CLAUDE_SKILL_DIR}/scripts/sol_wallet.py <command> [args]
+uv run "$SKILL_DIR/scripts/sol_wallet.py" <command> [args]
 ```
 
 All commands return JSON to stdout with a `success` field.
@@ -35,30 +37,30 @@ Without `SOL_PRIVATE_KEY`, all read commands work but transfers return an error.
 
 ### Configuration
 ```bash
-uv run ${CLAUDE_SKILL_DIR}/scripts/sol_wallet.py config
+uv run "$SKILL_DIR/scripts/sol_wallet.py" config
 ```
 
 ### Balances
 ```bash
 # SOL + all SPL token balances
-uv run ${CLAUDE_SKILL_DIR}/scripts/sol_wallet.py balances
+uv run "$SKILL_DIR/scripts/sol_wallet.py" balances
 
 # Balance of specific token by mint address
-uv run ${CLAUDE_SKILL_DIR}/scripts/sol_wallet.py balance-of --mint <mint_address>
+uv run "$SKILL_DIR/scripts/sol_wallet.py" balance-of --mint <mint_address>
 ```
 
 ### Transfers
 ```bash
 # Transfer SOL
-uv run ${CLAUDE_SKILL_DIR}/scripts/sol_wallet.py transfer --to <pubkey> --amount 1.5
+uv run "$SKILL_DIR/scripts/sol_wallet.py" transfer --to <pubkey> --amount 1.5
 
 # Transfer SPL token
-uv run ${CLAUDE_SKILL_DIR}/scripts/sol_wallet.py transfer-spl --mint <mint_address> --to <pubkey> --amount 100
+uv run "$SKILL_DIR/scripts/sol_wallet.py" transfer-spl --mint <mint_address> --to <pubkey> --amount 100
 ```
 
 ### Token Info
 ```bash
-uv run ${CLAUDE_SKILL_DIR}/scripts/sol_wallet.py token-info --mint <mint_address>
+uv run "$SKILL_DIR/scripts/sol_wallet.py" token-info --mint <mint_address>
 ```
 
 ## Safety Rules

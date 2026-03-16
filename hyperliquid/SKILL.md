@@ -17,8 +17,10 @@ metadata:
 
 Trade perpetual futures, spot tokens, and transfer USDC on HyperLiquid L1.
 
+Resolve `SKILL_DIR` as the directory containing this `SKILL.md`, then run scripts from absolute paths under that directory. Do not rely on the current working directory or any injected `CLAUDE_*` skill path variable.
+
 ```
-uv run ${CLAUDE_SKILL_DIR}/scripts/hl_client.py <command> [args]
+uv run "$SKILL_DIR/scripts/hl_client.py" <command> [args]
 ```
 
 All commands return JSON to stdout with a `success` field.
@@ -46,128 +48,128 @@ Without `EVM_PRIVATE_KEY`, all read commands work but trading commands return an
 ### Configuration
 ```bash
 # Show config status (works without any keys)
-uv run ${CLAUDE_SKILL_DIR}/scripts/hl_client.py config
+uv run "$SKILL_DIR/scripts/hl_client.py" config
 ```
 
 ### Account & Positions
 ```bash
 # Full account overview (equity, margin, positions)
-uv run ${CLAUDE_SKILL_DIR}/scripts/hl_client.py account
+uv run "$SKILL_DIR/scripts/hl_client.py" account
 
 # Open positions (all or one coin)
-uv run ${CLAUDE_SKILL_DIR}/scripts/hl_client.py positions
-uv run ${CLAUDE_SKILL_DIR}/scripts/hl_client.py positions --coin ETH
+uv run "$SKILL_DIR/scripts/hl_client.py" positions
+uv run "$SKILL_DIR/scripts/hl_client.py" positions --coin ETH
 
 # Pending orders (with trigger conditions)
-uv run ${CLAUDE_SKILL_DIR}/scripts/hl_client.py orders
+uv run "$SKILL_DIR/scripts/hl_client.py" orders
 
 # Spot wallet balances
-uv run ${CLAUDE_SKILL_DIR}/scripts/hl_client.py balance
+uv run "$SKILL_DIR/scripts/hl_client.py" balance
 
 # Fee schedule and volume tier
-uv run ${CLAUDE_SKILL_DIR}/scripts/hl_client.py fees
+uv run "$SKILL_DIR/scripts/hl_client.py" fees
 
 # Portfolio PnL (day/week/month/all-time)
-uv run ${CLAUDE_SKILL_DIR}/scripts/hl_client.py portfolio
+uv run "$SKILL_DIR/scripts/hl_client.py" portfolio
 ```
 
 ### Market Data
 ```bash
 # Full market info (funding, OI, volume, oracle, mark price)
-uv run ${CLAUDE_SKILL_DIR}/scripts/hl_client.py market-info --coin BTC
+uv run "$SKILL_DIR/scripts/hl_client.py" market-info --coin BTC
 
 # Orderbook
-uv run ${CLAUDE_SKILL_DIR}/scripts/hl_client.py orderbook --coin BTC --depth 20
+uv run "$SKILL_DIR/scripts/hl_client.py" orderbook --coin BTC --depth 20
 
 # All markets with prices, funding, OI
-uv run ${CLAUDE_SKILL_DIR}/scripts/hl_client.py all-markets
+uv run "$SKILL_DIR/scripts/hl_client.py" all-markets
 
 # OHLCV candles
-uv run ${CLAUDE_SKILL_DIR}/scripts/hl_client.py candles --coin BTC --interval 1h --days 1
+uv run "$SKILL_DIR/scripts/hl_client.py" candles --coin BTC --interval 1h --days 1
 
 # Funding rates
-uv run ${CLAUDE_SKILL_DIR}/scripts/hl_client.py funding --coin BTC --days 7
-uv run ${CLAUDE_SKILL_DIR}/scripts/hl_client.py funding --coins BTC,ETH,SOL
-uv run ${CLAUDE_SKILL_DIR}/scripts/hl_client.py funding
+uv run "$SKILL_DIR/scripts/hl_client.py" funding --coin BTC --days 7
+uv run "$SKILL_DIR/scripts/hl_client.py" funding --coins BTC,ETH,SOL
+uv run "$SKILL_DIR/scripts/hl_client.py" funding
 
 # Trade history
-uv run ${CLAUDE_SKILL_DIR}/scripts/hl_client.py trades --source user --days 7
-uv run ${CLAUDE_SKILL_DIR}/scripts/hl_client.py trades --source market --coin ETH --limit 50
+uv run "$SKILL_DIR/scripts/hl_client.py" trades --source user --days 7
+uv run "$SKILL_DIR/scripts/hl_client.py" trades --source market --coin ETH --limit 50
 
 # Order history
-uv run ${CLAUDE_SKILL_DIR}/scripts/hl_client.py historical-orders
+uv run "$SKILL_DIR/scripts/hl_client.py" historical-orders
 ```
 
 ### Position Sizing
 ```bash
 # Calculate size from % of margin
-uv run ${CLAUDE_SKILL_DIR}/scripts/hl_client.py calc-size --coin ETH --percent 10
+uv run "$SKILL_DIR/scripts/hl_client.py" calc-size --coin ETH --percent 10
 
 # Calculate size from USD
-uv run ${CLAUDE_SKILL_DIR}/scripts/hl_client.py calc-size --coin ETH --usd 500
+uv run "$SKILL_DIR/scripts/hl_client.py" calc-size --coin ETH --usd 500
 ```
 
 ### Perp Trading
 ```bash
 # Market order (by USD notional)
-uv run ${CLAUDE_SKILL_DIR}/scripts/hl_client.py order --coin ETH --side buy --usd 100
+uv run "$SKILL_DIR/scripts/hl_client.py" order --coin ETH --side buy --usd 100
 
 # Market order (by token size)
-uv run ${CLAUDE_SKILL_DIR}/scripts/hl_client.py order --coin ETH --side buy --sz 0.5
+uv run "$SKILL_DIR/scripts/hl_client.py" order --coin ETH --side buy --sz 0.5
 
 # Limit order
-uv run ${CLAUDE_SKILL_DIR}/scripts/hl_client.py order --coin ETH --side buy --sz 0.5 --limit-px 3000
+uv run "$SKILL_DIR/scripts/hl_client.py" order --coin ETH --side buy --sz 0.5 --limit-px 3000
 
 # Bracket order (entry + TP + SL)
-uv run ${CLAUDE_SKILL_DIR}/scripts/hl_client.py order --coin ETH --side buy --sz 0.5 --limit-px 3000 --tp-px 3500 --sl-px 2800
+uv run "$SKILL_DIR/scripts/hl_client.py" order --coin ETH --side buy --sz 0.5 --limit-px 3000 --tp-px 3500 --sl-px 2800
 
 # Close position (full or partial)
-uv run ${CLAUDE_SKILL_DIR}/scripts/hl_client.py close --coin ETH
-uv run ${CLAUDE_SKILL_DIR}/scripts/hl_client.py close --coin ETH --sz 0.25
+uv run "$SKILL_DIR/scripts/hl_client.py" close --coin ETH
+uv run "$SKILL_DIR/scripts/hl_client.py" close --coin ETH --sz 0.25
 
 # Modify order
-uv run ${CLAUDE_SKILL_DIR}/scripts/hl_client.py modify --coin ETH --oid 12345 --new-sz 1.0 --new-limit-px 3100
+uv run "$SKILL_DIR/scripts/hl_client.py" modify --coin ETH --oid 12345 --new-sz 1.0 --new-limit-px 3100
 
 # Cancel orders
-uv run ${CLAUDE_SKILL_DIR}/scripts/hl_client.py cancel                       # cancel all
-uv run ${CLAUDE_SKILL_DIR}/scripts/hl_client.py cancel --coin ETH             # cancel all for coin
-uv run ${CLAUDE_SKILL_DIR}/scripts/hl_client.py cancel --coin ETH --oid 123   # cancel specific
+uv run "$SKILL_DIR/scripts/hl_client.py" cancel                       # cancel all
+uv run "$SKILL_DIR/scripts/hl_client.py" cancel --coin ETH             # cancel all for coin
+uv run "$SKILL_DIR/scripts/hl_client.py" cancel --coin ETH --oid 123   # cancel specific
 
 # Set TP/SL on existing position
-uv run ${CLAUDE_SKILL_DIR}/scripts/hl_client.py tpsl --coin ETH --tp-px 3500 --sl-px 2800
+uv run "$SKILL_DIR/scripts/hl_client.py" tpsl --coin ETH --tp-px 3500 --sl-px 2800
 
 # Update leverage
-uv run ${CLAUDE_SKILL_DIR}/scripts/hl_client.py leverage --coin ETH --leverage 10 --cross
+uv run "$SKILL_DIR/scripts/hl_client.py" leverage --coin ETH --leverage 10 --cross
 
 # TWAP order
-uv run ${CLAUDE_SKILL_DIR}/scripts/hl_client.py twap --coin ETH --side buy --sz 1.0 --minutes 30
-uv run ${CLAUDE_SKILL_DIR}/scripts/hl_client.py twap --coin ETH --cancel 12345
+uv run "$SKILL_DIR/scripts/hl_client.py" twap --coin ETH --side buy --sz 1.0 --minutes 30
+uv run "$SKILL_DIR/scripts/hl_client.py" twap --coin ETH --cancel 12345
 
 # Dead man's switch (cancel all at timestamp)
-uv run ${CLAUDE_SKILL_DIR}/scripts/hl_client.py schedule-cancel --timestamp 1700000000000
-uv run ${CLAUDE_SKILL_DIR}/scripts/hl_client.py schedule-cancel --clear
+uv run "$SKILL_DIR/scripts/hl_client.py" schedule-cancel --timestamp 1700000000000
+uv run "$SKILL_DIR/scripts/hl_client.py" schedule-cancel --clear
 ```
 
 ### Spot Trading
 ```bash
 # Buy spot token
-uv run ${CLAUDE_SKILL_DIR}/scripts/hl_client.py spot-order --coin HYPE/USDC --side buy --usd 100
+uv run "$SKILL_DIR/scripts/hl_client.py" spot-order --coin HYPE/USDC --side buy --usd 100
 
 # Sell spot token
-uv run ${CLAUDE_SKILL_DIR}/scripts/hl_client.py spot-order --coin HYPE/USDC --side sell --sz 10
+uv run "$SKILL_DIR/scripts/hl_client.py" spot-order --coin HYPE/USDC --side sell --sz 10
 ```
 
 ### Transfers
 ```bash
 # Move USDC between spot and perp wallets
-uv run ${CLAUDE_SKILL_DIR}/scripts/hl_client.py transfer --amount 100 --direction to-perp
-uv run ${CLAUDE_SKILL_DIR}/scripts/hl_client.py transfer --amount 100 --direction to-spot
+uv run "$SKILL_DIR/scripts/hl_client.py" transfer --amount 100 --direction to-perp
+uv run "$SKILL_DIR/scripts/hl_client.py" transfer --amount 100 --direction to-spot
 
 # Send USDC to another HL address
-uv run ${CLAUDE_SKILL_DIR}/scripts/hl_client.py send --amount 50 --to 0x1234...
+uv run "$SKILL_DIR/scripts/hl_client.py" send --amount 50 --to 0x1234...
 
 # Withdraw to EVM via bridge
-uv run ${CLAUDE_SKILL_DIR}/scripts/hl_client.py withdraw --amount 100 --to 0x1234...
+uv run "$SKILL_DIR/scripts/hl_client.py" withdraw --amount 100 --to 0x1234...
 ```
 
 ## Order Types

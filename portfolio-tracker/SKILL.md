@@ -28,11 +28,7 @@ Returns:
 
 ### HyperLiquid
 
-For HyperLiquid equity, positions, and P&L — use the **hyperliquid-perps** skill:
-```bash
-uv run scripts/hl_client.py account    # equity, margin, open positions
-uv run scripts/hl_client.py positions  # detailed position list
-```
+For HyperLiquid equity, positions, and P&L, switch to the `hyperliquid` skill and use its `account` and `positions` commands. This skill does not own a local `hl_client.py` script.
 
 ## When to Use
 
