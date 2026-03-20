@@ -30,7 +30,8 @@ def _get_client():
 
     return PMClient(
         private_key=os.environ.get("EVM_PRIVATE_KEY", ""),
-        funder_address=os.environ.get("EVM_WALLET_ADDRESS", ""),
+        funder_address=os.environ.get("POLY_FUNDER_ADDRESS", os.environ.get("EVM_WALLET_ADDRESS", "")),
+        signature_type=int(os.environ.get("POLY_SIGNATURE_TYPE", "0")),
         builder_api_key=os.environ.get("POLY_BUILDER_API_KEY", ""),
         builder_secret=os.environ.get("POLY_BUILDER_SECRET", ""),
         builder_passphrase=os.environ.get("POLY_BUILDER_PASSPHRASE", ""),
@@ -62,9 +63,22 @@ def _parse_tristate_bool(value: str | None) -> bool | None:
     raise ValueError(f"Unsupported boolean selector: {value}")
 
 
-def _format_market(m) -> dict:
-    """Convert Market model to a clean dict for JSON output."""
+def _format_quality(market) -> dict:
+    """Extract quality info from a market."""
+    q = market.quality
     return {
+        "tradability_score": q.tradability_score,
+        "liquidity_usd": q.liquidity_usd,
+        "volume_24h_usd": q.volume_24h_usd,
+        "spread_pct": q.spread_pct,
+        "is_tradable": q.is_tradable,
+        "warnings": q.warnings,
+    }
+
+
+def _format_market(m) -> dict:
+    """Convert Market model to a clean dict for JSON output, including quality."""
+    data = {
         "slug": m.slug or m.market_slug,
         "market_slug": m.market_slug,
         "question": m.question,
@@ -79,7 +93,9 @@ def _format_market(m) -> dict:
             {"outcome": t.outcome, "price": t.price, "token_id": t.token_id}
             for t in (m.tokens or [])
         ],
+        "quality": _format_quality(m),
     }
+    return data
 
 
 def _format_candidate(m) -> dict:
@@ -196,6 +212,10 @@ async def _resolve_market(client, query: str | None, outcome: str | None, market
 
     return markets[0], None
 
+
+# ---------------------------------------------------------------------------
+# Command handlers
+# ---------------------------------------------------------------------------
 
 async def cmd_events(args):
     from pm_services import Market
@@ -375,6 +395,7 @@ async def cmd_odds(args):
         result["volume"] = m.volume_24hr or m.volume or 0
         result["liquidity"] = m.liquidity_num or m.liquidity or 0
         result["end_date"] = m.end_date.isoformat() if m.end_date else None
+        result["quality"] = _format_quality(m)
         results.append(result)
 
     _out({"success": True, "markets": results})
@@ -484,6 +505,8 @@ async def cmd_market_trades(args):
 
 
 async def cmd_buy(args):
+    from pm_services import validate_pre_trade
+
     client = _get_client()
     if not client.has_trading:
         _out({"success": False, "error": "Trading not configured. Set EVM_PRIVATE_KEY and EVM_WALLET_ADDRESS."})
@@ -499,10 +522,54 @@ async def cmd_buy(args):
         _out(error)
         return
 
+    # Limit buy requires price — check before validation so error is clear
+    if not args.market_order:
+        if not args.price:
+            _out({"success": False, "error": "Limit orders require --price"})
+            return
+        if not (0.01 <= args.price <= 0.99):
+            _out({"success": False, "error": "Price must be between 0.01 and 0.99"})
+            return
+        if args.time_in_force == "GTD" and not args.expire_seconds:
+            _out({"success": False, "error": "GTD orders require --expire-seconds"})
+            return
+
+    # Pre-trade validation
+    usdc_balance = None
+    book_depth = None
     token_id = market.get_token_id(args.outcome)
-    if not token_id:
-        available = market.outcomes or ([t.outcome for t in market.tokens] if market.tokens else [])
-        _out({"success": False, "error": f"Outcome '{args.outcome}' not found. Available: {available}"})
+    try:
+        usdc_balance = client.get_usdc_balance()
+    except Exception:
+        pass
+
+    if args.market_order and token_id:
+        try:
+            book_depth = client.get_book_depth_usd(token_id, side="asks")
+        except Exception:
+            pass
+
+    validation = validate_pre_trade(
+        market=market,
+        outcome=args.outcome,
+        amount_usd=args.amount_usd,
+        price=args.price,
+        is_market_order=args.market_order,
+        skip_liquidity_check=args.skip_liquidity_check,
+        skip_spread_check=args.skip_spread_check,
+        usdc_balance=usdc_balance,
+        book_depth_usd=book_depth,
+    )
+
+    if not validation.can_trade:
+        _out({
+            "success": False,
+            "error": "Pre-trade validation failed",
+            "validation": {
+                "checks": [c.model_dump() for c in validation.checks],
+                "warnings": validation.warnings,
+            },
+        })
         return
 
     if args.market_order:
@@ -517,17 +584,12 @@ async def cmd_buy(args):
             "outcome": args.outcome, "amount_usd": args.amount_usd, "order_id": order_id,
             "time_in_force": args.market_tif,
             "builder": client.get_builder_status(),
+            "validation": {
+                "checks_passed": sum(1 for c in validation.checks if c.passed),
+                "checks_warned": len(validation.warnings),
+            },
         })
     else:
-        if not args.price:
-            _out({"success": False, "error": "Limit orders require --price"})
-            return
-        if not (0.01 <= args.price <= 0.99):
-            _out({"success": False, "error": "Price must be between 0.01 and 0.99"})
-            return
-        if args.time_in_force == "GTD" and not args.expire_seconds:
-            _out({"success": False, "error": "GTD orders require --expire-seconds"})
-            return
         shares = args.amount_usd / args.price
         order_id = client.buy(
             token_id=token_id,
@@ -543,10 +605,16 @@ async def cmd_buy(args):
             "shares": round(shares, 2), "cost_usd": args.amount_usd, "order_id": order_id,
             "time_in_force": args.time_in_force,
             "builder": client.get_builder_status(),
+            "validation": {
+                "checks_passed": sum(1 for c in validation.checks if c.passed),
+                "checks_warned": len(validation.warnings),
+            },
         })
 
 
 async def cmd_sell(args):
+    from pm_services import validate_pre_trade
+
     client = _get_client()
     if not client.has_trading:
         _out({"success": False, "error": "Trading not configured. Set EVM_PRIVATE_KEY and EVM_WALLET_ADDRESS."})
@@ -562,10 +630,47 @@ async def cmd_sell(args):
         _out(error)
         return
 
+    # Limit sell requires price — check before validation so error is clear
+    if not args.market_order:
+        if not args.price or not (0.01 <= args.price <= 0.99):
+            _out({"success": False, "error": "Limit sells require --price between 0.01 and 0.99"})
+            return
+        if args.time_in_force == "GTD" and not args.expire_seconds:
+            _out({"success": False, "error": "GTD orders require --expire-seconds"})
+            return
+
+    # Pre-trade validation (amount_usd estimated from shares * price for sells)
+    estimated_usd = args.shares * (args.price or 0.50)
+    book_depth = None
     token_id = market.get_token_id(args.outcome)
-    if not token_id:
-        available = market.outcomes or ([t.outcome for t in market.tokens] if market.tokens else [])
-        _out({"success": False, "error": f"Outcome '{args.outcome}' not found. Available: {available}"})
+
+    if args.market_order and token_id:
+        try:
+            book_depth = client.get_book_depth_usd(token_id, side="bids")
+        except Exception:
+            pass
+
+    validation = validate_pre_trade(
+        market=market,
+        outcome=args.outcome,
+        amount_usd=estimated_usd if estimated_usd > 0 else 1.0,
+        price=args.price,
+        is_market_order=args.market_order,
+        skip_liquidity_check=args.skip_liquidity_check,
+        skip_spread_check=args.skip_spread_check,
+        usdc_balance=None,  # Sells don't need balance
+        book_depth_usd=book_depth,
+    )
+
+    if not validation.can_trade:
+        _out({
+            "success": False,
+            "error": "Pre-trade validation failed",
+            "validation": {
+                "checks": [c.model_dump() for c in validation.checks],
+                "warnings": validation.warnings,
+            },
+        })
         return
 
     if args.market_order:
@@ -580,14 +685,11 @@ async def cmd_sell(args):
             "outcome": args.outcome, "shares": args.shares, "order_id": order_id,
             "time_in_force": args.market_tif,
             "builder": client.get_builder_status(),
+            "validation": {
+                "checks_passed": sum(1 for c in validation.checks if c.passed),
+                "checks_warned": len(validation.warnings),
+            },
         })
-        return
-
-    if not args.price or not (0.01 <= args.price <= 0.99):
-        _out({"success": False, "error": "Limit sells require --price between 0.01 and 0.99"})
-        return
-    if args.time_in_force == "GTD" and not args.expire_seconds:
-        _out({"success": False, "error": "GTD orders require --expire-seconds"})
         return
 
     order_id = client.sell(
@@ -604,6 +706,10 @@ async def cmd_sell(args):
         "shares": args.shares, "proceeds_usd": round(args.shares * args.price, 2), "order_id": order_id,
         "time_in_force": args.time_in_force,
         "builder": client.get_builder_status(),
+        "validation": {
+            "checks_passed": sum(1 for c in validation.checks if c.passed),
+            "checks_warned": len(validation.warnings),
+        },
     })
 
 
@@ -627,23 +733,39 @@ async def cmd_positions(args):
         return
 
     formatted = []
+    redeemable_count = 0
     for p in positions:
         size = float(p.get("size", 0))
         if abs(size) < 0.01:
             continue
+        cur_price = float(p.get("curPrice", 0))
+        resolved = p.get("resolved", False)
+        redeemable = bool(resolved and cur_price >= 0.99)
+        if redeemable:
+            redeemable_count += 1
         formatted.append({
             "title": p.get("title", ""),
             "outcome": p.get("outcome", ""),
             "size": size,
             "avg_price": float(p.get("avgPrice", 0)),
-            "current_price": float(p.get("curPrice", 0)),
+            "current_price": cur_price,
             "initial_value": float(p.get("initialValue", 0)),
             "current_value": float(p.get("currentValue", 0)),
             "pnl": float(p.get("cashPnl", 0)),
             "pnl_pct": float(p.get("percentPnl", 0)),
             "end_date": p.get("endDate", ""),
+            "condition_id": p.get("conditionId", ""),
+            "resolved": resolved,
+            "redeemable": redeemable,
         })
-    _out({"success": True, "positions": formatted})
+    _out({
+        "success": True,
+        "positions": formatted,
+        "summary": {
+            "total_positions": len(formatted),
+            "redeemable_positions": redeemable_count,
+        },
+    })
 
 
 async def cmd_trades(args):
@@ -752,6 +874,44 @@ async def cmd_fund_status(args):
     _out({"success": True, "deposit_address": args.deposit_address, "transactions": transactions})
 
 
+async def cmd_withdraw_quote(args):
+    """Get a bridge quote for withdrawing from Polygon."""
+    client = _get_client()
+    recipient_address = args.recipient_address or os.environ.get("EVM_WALLET_ADDRESS", "")
+    if not recipient_address:
+        _out({"success": False, "error": "Provide --recipient-address or set EVM_WALLET_ADDRESS"})
+        return
+
+    quote = await client.get_bridge_quote(
+        from_chain_id="137",
+        from_token_address="0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174",
+        recipient_address=recipient_address,
+        to_chain_id=args.to_chain_id,
+        to_token_address=args.to_token_address,
+        from_amount_base_unit=args.from_amount_base_unit,
+    )
+    _out({"success": True, "recipient_address": recipient_address, "quote": quote})
+
+
+async def cmd_withdraw_address(args):
+    """Initiate a bridge withdrawal and get the withdrawal address."""
+    client = _get_client()
+    address = args.address or os.environ.get("EVM_WALLET_ADDRESS", "")
+    if not address:
+        _out({"success": False, "error": "Provide --address or set EVM_WALLET_ADDRESS"})
+        return
+
+    result = await client.initiate_bridge_withdrawal(address)
+    _out({"success": True, "address": address, "withdrawal": result})
+
+
+async def cmd_withdraw_status(args):
+    """Check withdrawal transaction status (reuses bridge status endpoint)."""
+    client = _get_client()
+    transactions = await client.get_bridge_status(args.deposit_address)
+    _out({"success": True, "deposit_address": args.deposit_address, "transactions": transactions})
+
+
 async def cmd_geoblock(args):
     client = _get_client()
     result = await client.get_geoblock(ip=args.ip)
@@ -787,12 +947,236 @@ async def cmd_readiness(args):
     })
 
 
+# ---------------------------------------------------------------------------
+# NEW commands
+# ---------------------------------------------------------------------------
+
+async def cmd_assess(args):
+    """Single-market quality report with orderbook snapshot."""
+    client = _get_client()
+    market, error = await _resolve_market(
+        client,
+        query=args.query,
+        outcome=args.outcome,
+        market_slug=args.market_slug,
+    )
+    if error:
+        _out(error)
+        return
+
+    quality = _format_quality(market)
+
+    # Get orderbook snapshot for primary outcome
+    outcome = args.outcome or "Yes"
+    token_id = market.get_token_id(outcome)
+    orderbook_snapshot = None
+    if token_id:
+        try:
+            midpoint = client.get_midpoint(token_id)
+            spread = client.get_spread(token_id)
+            bid_depth = client.get_book_depth_usd(token_id, side="bids")
+            ask_depth = client.get_book_depth_usd(token_id, side="asks")
+            orderbook_snapshot = {
+                "outcome": outcome,
+                "token_id": token_id,
+                "midpoint": midpoint,
+                "spread": spread,
+                "bid_depth_usd": round(bid_depth, 2),
+                "ask_depth_usd": round(ask_depth, 2),
+            }
+        except Exception as e:
+            orderbook_snapshot = {"error": str(e)}
+
+    _out({
+        "success": True,
+        "market": _format_candidate(market),
+        "quality": quality,
+        "orderbook": orderbook_snapshot,
+    })
+
+
+async def cmd_validate_trade(args):
+    """Dry-run pre-trade validation without placing an order."""
+    from pm_services import validate_pre_trade
+
+    client = _get_client()
+    market, error = await _resolve_market(
+        client,
+        query=args.query,
+        outcome=args.outcome,
+        market_slug=args.market_slug,
+    )
+    if error:
+        _out(error)
+        return
+
+    usdc_balance = None
+    book_depth = None
+    if client.has_trading:
+        try:
+            usdc_balance = client.get_usdc_balance()
+        except Exception:
+            pass
+
+    if args.market_order:
+        token_id = market.get_token_id(args.outcome)
+        if token_id:
+            side = "asks" if args.side == "buy" else "bids"
+            try:
+                book_depth = client.get_book_depth_usd(token_id, side=side)
+            except Exception:
+                pass
+
+    validation = validate_pre_trade(
+        market=market,
+        outcome=args.outcome,
+        amount_usd=args.amount_usd,
+        price=args.price,
+        is_market_order=args.market_order,
+        skip_liquidity_check=args.skip_liquidity_check,
+        skip_spread_check=args.skip_spread_check,
+        usdc_balance=usdc_balance,
+        book_depth_usd=book_depth,
+    )
+
+    _out({
+        "success": True,
+        "market": market.question,
+        "market_slug": market.slug or market.market_slug,
+        "outcome": args.outcome,
+        "amount_usd": args.amount_usd,
+        "can_trade": validation.can_trade,
+        "checks": [c.model_dump() for c in validation.checks],
+        "warnings": validation.warnings,
+    })
+
+
+async def cmd_top_markets(args):
+    """Top N markets by quality score."""
+    client = _get_client()
+    markets = await client.get_top_markets(limit=args.limit, tag=args.tag)
+    _out({
+        "success": True,
+        "markets": [_format_market(m) for m in markets],
+    })
+
+
+async def cmd_split(args):
+    """Split USDC.e into YES + NO outcome tokens."""
+    client = _get_client()
+    condition_id = args.condition_id
+    neg_risk = False
+
+    if not condition_id:
+        market, error = await _resolve_market(
+            client,
+            query=args.query,
+            outcome=None,
+            market_slug=args.market_slug,
+        )
+        if error:
+            _out(error)
+            return
+        condition_id = market.condition_id
+        neg_risk = getattr(market, "neg_risk", False)
+        if not condition_id:
+            _out({"success": False, "error": "Could not determine condition_id for this market"})
+            return
+
+    result = client.split_position(condition_id, args.amount_usdc, neg_risk=neg_risk)
+    result["success"] = True
+    result["condition_id"] = condition_id
+    _out(result)
+
+
+async def cmd_merge(args):
+    """Merge YES + NO outcome tokens back into USDC.e."""
+    client = _get_client()
+    condition_id = args.condition_id
+    neg_risk = False
+
+    if not condition_id:
+        market, error = await _resolve_market(
+            client,
+            query=args.query,
+            outcome=None,
+            market_slug=args.market_slug,
+        )
+        if error:
+            _out(error)
+            return
+        condition_id = market.condition_id
+        neg_risk = getattr(market, "neg_risk", False)
+        if not condition_id:
+            _out({"success": False, "error": "Could not determine condition_id for this market"})
+            return
+
+    result = client.merge_positions(condition_id, args.amount_usdc, neg_risk=neg_risk)
+    result["success"] = True
+    result["condition_id"] = condition_id
+    _out(result)
+
+
+async def cmd_redeem(args):
+    """Redeem resolved CTF positions back to USDC.e."""
+    client = _get_client()
+    condition_id = args.condition_id
+
+    if not condition_id:
+        market, error = await _resolve_market(
+            client,
+            query=args.query,
+            outcome=None,
+            market_slug=args.market_slug,
+        )
+        if error:
+            _out(error)
+            return
+        condition_id = market.condition_id
+        if not condition_id:
+            _out({"success": False, "error": "Could not determine condition_id for this market"})
+            return
+
+    result = client.redeem_positions(condition_id)
+    result["success"] = True
+    result["condition_id"] = condition_id
+    _out(result)
+
+
+async def cmd_config(args):
+    """Show environment/configuration status."""
+    client = _get_client()
+    sig_type = int(os.environ.get("POLY_SIGNATURE_TYPE", "0"))
+    sig_type_label = {0: "EOA", 1: "Proxy", 2: "Gnosis Safe"}.get(sig_type, f"Unknown ({sig_type})")
+    _out({
+        "success": True,
+        "config": {
+            "wallet_address": os.environ.get("EVM_WALLET_ADDRESS", ""),
+            "funder_address": os.environ.get("POLY_FUNDER_ADDRESS", os.environ.get("EVM_WALLET_ADDRESS", "")),
+            "signature_type": sig_type,
+            "signature_type_label": sig_type_label,
+            "trading_configured": client.has_trading,
+            "builder": client.get_builder_status(),
+            "has_private_key": bool(os.environ.get("EVM_PRIVATE_KEY")),
+            "quality_thresholds": {
+                "min_liquidity_usd": 5000,
+                "max_spread_limit": 0.10,
+                "book_depth_multiplier": 1.5,
+            },
+        },
+    })
+
+
+# ---------------------------------------------------------------------------
+# Argument parser
+# ---------------------------------------------------------------------------
+
 def main():
     parser = argparse.ArgumentParser(description="Polymarket CLI")
     sub = parser.add_subparsers(dest="command", required=True)
 
     # search
-    p = sub.add_parser("search", help="Search markets")
+    p = sub.add_parser("search", help="Search markets (quality-ranked)")
     p.add_argument("--query", required=True)
     p.add_argument("--limit", type=int, default=10)
     p.add_argument("--tag", default=None, help="Filter by tag (crypto, politics, sports, etc.)")
@@ -881,7 +1265,7 @@ def main():
     p.add_argument("--limit", type=int, default=20)
 
     # buy
-    p = sub.add_parser("buy", help="Buy outcome shares")
+    p = sub.add_parser("buy", help="Buy outcome shares (with pre-trade validation)")
     p.add_argument("--query", default=None, help="Market search query")
     p.add_argument("--market-slug", default=None, help="Exact market slug from `resolve`")
     p.add_argument("--outcome", required=True, help="Outcome to buy (e.g. Yes, No)")
@@ -891,9 +1275,11 @@ def main():
     p.add_argument("--market-tif", default="FOK", choices=["FOK", "FAK"], help="Time in force for market orders")
     p.add_argument("--time-in-force", default="GTC", choices=["GTC", "FAK", "GTD"], help="Time in force for limit orders")
     p.add_argument("--expire-seconds", type=int, default=None, help="Required for GTD orders")
+    p.add_argument("--skip-liquidity-check", action="store_true", help="Bypass minimum liquidity check")
+    p.add_argument("--skip-spread-check", action="store_true", help="Bypass maximum spread check")
 
     # sell
-    p = sub.add_parser("sell", help="Sell outcome shares")
+    p = sub.add_parser("sell", help="Sell outcome shares (with pre-trade validation)")
     p.add_argument("--query", default=None, help="Market search query")
     p.add_argument("--market-slug", default=None, help="Exact market slug from `resolve`")
     p.add_argument("--outcome", required=True, help="Outcome to sell")
@@ -903,6 +1289,8 @@ def main():
     p.add_argument("--market-tif", default="FOK", choices=["FOK", "FAK"], help="Time in force for market sells")
     p.add_argument("--time-in-force", default="GTC", choices=["GTC", "FAK", "GTD"], help="Time in force for limit sells")
     p.add_argument("--expire-seconds", type=int, default=None, help="Required for GTD orders")
+    p.add_argument("--skip-liquidity-check", action="store_true", help="Bypass minimum liquidity check")
+    p.add_argument("--skip-spread-check", action="store_true", help="Bypass maximum spread check")
 
     # balance
     sub.add_parser("balance", help="Check USDC.e balance (trading-ready)")
@@ -963,6 +1351,21 @@ def main():
     p = sub.add_parser("fund-status", help="Check bridge transaction status for a deposit address")
     p.add_argument("--deposit-address", required=True)
 
+    # withdraw-quote
+    p = sub.add_parser("withdraw-quote", help="Get a bridge quote for withdrawing from Polygon")
+    p.add_argument("--to-chain-id", required=True, help="Destination chain id (e.g. 1 for Ethereum)")
+    p.add_argument("--to-token-address", required=True, help="Destination token contract address")
+    p.add_argument("--from-amount-base-unit", required=True, help="USDC.e amount in base units (6 decimals)")
+    p.add_argument("--recipient-address", default=None, help="Defaults to EVM_WALLET_ADDRESS")
+
+    # withdraw-address
+    p = sub.add_parser("withdraw-address", help="Initiate a bridge withdrawal from Polygon")
+    p.add_argument("--address", default=None, help="Defaults to EVM_WALLET_ADDRESS")
+
+    # withdraw-status
+    p = sub.add_parser("withdraw-status", help="Check withdrawal transaction status")
+    p.add_argument("--deposit-address", required=True, help="Address from withdraw-address")
+
     # geoblock
     p = sub.add_parser("geoblock", help="Check whether the current IP is geographically blocked")
     p.add_argument("--ip", default=None, help="Optional IP override if the endpoint supports it")
@@ -970,6 +1373,54 @@ def main():
     # readiness
     p = sub.add_parser("readiness", help="One-shot readiness check: geography, balance, and builder attribution")
     p.add_argument("--ip", default=None, help="Optional IP override if the endpoint supports it")
+
+    # --- NEW COMMANDS ---
+
+    # assess
+    p = sub.add_parser("assess", help="Single-market quality report with orderbook snapshot")
+    p.add_argument("--query", default=None, help="Market search query")
+    p.add_argument("--market-slug", default=None, help="Exact market slug")
+    p.add_argument("--outcome", default=None, help="Focus outcome for orderbook (default: Yes)")
+
+    # validate-trade
+    p = sub.add_parser("validate-trade", help="Dry-run pre-trade validation (no order placed)")
+    p.add_argument("--query", default=None, help="Market search query")
+    p.add_argument("--market-slug", default=None, help="Exact market slug")
+    p.add_argument("--outcome", required=True, help="Outcome to validate")
+    p.add_argument("--amount-usd", type=float, required=True, help="USD amount")
+    p.add_argument("--price", type=float, default=None, help="Limit price (omit for market order check)")
+    p.add_argument("--side", default="buy", choices=["buy", "sell"], help="Trade side")
+    p.add_argument("--market-order", action="store_true", help="Validate as market order")
+    p.add_argument("--skip-liquidity-check", action="store_true", help="Bypass minimum liquidity check")
+    p.add_argument("--skip-spread-check", action="store_true", help="Bypass maximum spread check")
+
+    # top-markets
+    p = sub.add_parser("top-markets", help="Top N markets by composite quality score")
+    p.add_argument("--limit", type=int, default=10)
+    p.add_argument("--tag", default=None, help="Optional tag filter (crypto, politics, sports, etc.)")
+
+    # redeem
+    p = sub.add_parser("redeem", help="Redeem resolved CTF positions back to USDC.e")
+    p.add_argument("--condition-id", default=None, help="Direct condition id")
+    p.add_argument("--market-slug", default=None, help="Resolve condition id from market slug")
+    p.add_argument("--query", default=None, help="Market search query")
+
+    # split
+    p = sub.add_parser("split", help="Split USDC.e into YES + NO outcome tokens")
+    p.add_argument("--condition-id", default=None, help="Direct condition id")
+    p.add_argument("--market-slug", default=None, help="Resolve condition id from market slug")
+    p.add_argument("--query", default=None, help="Market search query")
+    p.add_argument("--amount-usdc", type=float, required=True, help="USDC amount to split")
+
+    # merge
+    p = sub.add_parser("merge", help="Merge YES + NO outcome tokens back into USDC.e")
+    p.add_argument("--condition-id", default=None, help="Direct condition id")
+    p.add_argument("--market-slug", default=None, help="Resolve condition id from market slug")
+    p.add_argument("--query", default=None, help="Market search query")
+    p.add_argument("--amount-usdc", type=float, required=True, help="USDC amount to merge")
+
+    # config
+    sub.add_parser("config", help="Show environment and configuration status")
 
     args = parser.parse_args()
 
@@ -1000,8 +1451,19 @@ def main():
         "fund-quote": cmd_fund_quote,
         "fund-address": cmd_fund_address,
         "fund-status": cmd_fund_status,
+        "withdraw-quote": cmd_withdraw_quote,
+        "withdraw-address": cmd_withdraw_address,
+        "withdraw-status": cmd_withdraw_status,
         "geoblock": cmd_geoblock,
         "readiness": cmd_readiness,
+        # New commands
+        "redeem": cmd_redeem,
+        "split": cmd_split,
+        "merge": cmd_merge,
+        "assess": cmd_assess,
+        "validate-trade": cmd_validate_trade,
+        "top-markets": cmd_top_markets,
+        "config": cmd_config,
     }[args.command]
 
     try:

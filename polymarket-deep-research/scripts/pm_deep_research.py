@@ -3,10 +3,12 @@
 # requires-python = ">=3.11"
 # dependencies = ["httpx", "pydantic", "py-clob-client", "eth-account", "web3"]
 # ///
-"""Polymarket deep research - read-only market + external evidence synthesis.
+"""Polymarket deep research - quality-aware market research, thesis generation, and comparison.
 
 Run with:
   uv run pm_deep_research.py research --query "..."
+  uv run pm_deep_research.py thesis --query "..." --outcome Yes
+  uv run pm_deep_research.py compare --query "..."
 """
 
 from __future__ import annotations
@@ -25,7 +27,17 @@ SKILLS_ROOT = SCRIPT_DIR.parent.parent
 POLYMARKET_SCRIPTS_DIR = SKILLS_ROOT / "polymarket" / "scripts"
 sys.path.insert(0, str(POLYMARKET_SCRIPTS_DIR))
 
-from pm_services import PMClient, Market  # noqa: E402
+from pm_services import (  # noqa: E402
+    PMClient,
+    Market,
+    MarketQuality,
+    compute_market_quality,
+    score_relevance,
+    _get_market_liquidity,
+    _get_market_volume,
+    _get_market_spread,
+    _market_search_text,
+)
 
 
 def _out(data):
@@ -39,6 +51,18 @@ def _parse_jsonish(value):
         except json.JSONDecodeError:
             return value
     return value
+
+
+def _format_quality(market: Market) -> dict:
+    q = market.quality
+    return {
+        "tradability_score": q.tradability_score,
+        "liquidity_usd": q.liquidity_usd,
+        "volume_24h_usd": q.volume_24h_usd,
+        "spread_pct": q.spread_pct,
+        "is_tradable": q.is_tradable,
+        "warnings": q.warnings,
+    }
 
 
 def _format_market(m: Market, focus_outcome: str | None = None, orderbook: dict | None = None) -> dict:
@@ -58,6 +82,7 @@ def _format_market(m: Market, focus_outcome: str | None = None, orderbook: dict 
             {"outcome": t.outcome, "price": t.price, "token_id": t.token_id}
             for t in (m.tokens or [])
         ],
+        "quality": _format_quality(m),
     }
     if focus_outcome:
         payload["focus_outcome"] = focus_outcome
@@ -170,7 +195,53 @@ async def _run_external_research(query: str, outcome: str | None, markets: list[
         return {"summary": content}
 
 
+async def _run_thesis_research(query: str, outcome: str, market: dict) -> dict | None:
+    """Generate a structured thesis via external research."""
+    api_url = os.environ.get("GIGABRAIN_API_URL", "").rstrip("/")
+    api_key = os.environ.get("GIGABRAIN_API_KEY", "")
+    if not api_url:
+        return None
+
+    prompt = (
+        "You are generating a structured Polymarket trade thesis.\n"
+        f"Market: {market.get('question', '')}\n"
+        f"Slug: {market.get('slug', '')}\n"
+        f"Current Yes price: {market.get('yes_price', 'unknown')}\n"
+        f"Focus outcome: {outcome}\n"
+        f"Liquidity: ${market.get('liquidity', 0):,.0f}\n"
+        f"Volume 24h: ${market.get('volume', 0):,.0f}\n"
+        f"End date: {market.get('end_date', 'unknown')}\n"
+        "\nProvide a structured thesis with:\n"
+        "1. CONVICTION SCORE (0-100): How confident is this trade?\n"
+        "2. RECOMMENDED SIZING: What % of available capital? (conservative/moderate/aggressive)\n"
+        "3. TARGET PRICE: What price represents fair value?\n"
+        "4. STOP PRICE: At what price should you exit?\n"
+        "5. KEY CATALYSTS: Upcoming events with dates that could move this market\n"
+        "6. BULL CASE: Evidence supporting the outcome\n"
+        "7. BEAR CASE: Evidence against the outcome\n"
+        "8. MONITORING TRIGGERS: What signals to watch for position changes\n"
+        "9. RESOLUTION RISKS: Wording traps or ambiguities in market resolution\n"
+        "\nUse dated evidence and mention sources where possible."
+    )
+
+    headers = {}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    async with httpx.AsyncClient(timeout=120, headers=headers) as client:
+        resp = await client.post(f"{api_url}/v1/chat", json={"message": prompt})
+        resp.raise_for_status()
+        data = resp.json()
+        content = data.get("content") or data.get("message") or str(data)
+        return {"thesis": content}
+
+
+# ---------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------
+
 async def cmd_research(args):
+    """Quality-aware research across events, markets, and external sources."""
     client = PMClient()
     try:
         public_search = await client.public_search(args.query, limit=args.limit)
@@ -219,15 +290,29 @@ async def cmd_research(args):
                 except Exception as e:
                     focus_market_history = {"error": str(e)}
 
+        # Tradability verdict
+        tradable_markets = [m for m in market_payloads if m.get("quality", {}).get("is_tradable")]
+        untradable_markets = [m for m in market_payloads if not m.get("quality", {}).get("is_tradable")]
+
         if not market_payloads:
             next_step = "No confident Polymarket match found. Refine the query or inspect candidate events manually."
-        elif len(market_payloads) == 1:
+        elif not tradable_markets:
             next_step = (
-                "Resolved to a single market. Use the polymarket skill with "
-                f"--market-slug {market_payloads[0]['slug']} for orderbook or execution."
+                "Found markets but none are tradable (low liquidity or inactive). "
+                "Consider monitoring these markets or broadening the search."
+            )
+        elif len(tradable_markets) == 1:
+            next_step = (
+                f"Resolved to one tradable market. Use the polymarket skill with "
+                f"--market-slug {tradable_markets[0]['slug']} for orderbook or execution."
             )
         else:
-            next_step = "If multiple candidate markets remain, pick one exact market_slug and switch to the polymarket skill."
+            best = max(tradable_markets, key=lambda m: m.get("quality", {}).get("tradability_score", 0))
+            next_step = (
+                f"Multiple tradable markets found. Best quality: {best['slug']} "
+                f"(score: {best.get('quality', {}).get('tradability_score', 0)}). "
+                "Pick one exact market_slug and switch to the polymarket skill."
+            )
 
         _out({
             "success": True,
@@ -239,6 +324,8 @@ async def cmd_research(args):
             "public_search_inactive_match_count": public_search.get("inactive_match_count", 0),
             "events": [_format_event(event, args.market_limit) for event in events],
             "candidate_markets": market_payloads,
+            "tradable_count": len(tradable_markets),
+            "untradable_count": len(untradable_markets),
             "focus_market_history": focus_market_history,
             "external_research": external_research,
             "next_step": next_step,
@@ -247,11 +334,168 @@ async def cmd_research(args):
         await client.close()
 
 
+async def cmd_thesis(args):
+    """Generate a structured trade thesis for a specific market and outcome."""
+    client = PMClient()
+    try:
+        markets = await client.search_markets(args.query, limit=5)
+        if not markets:
+            _out({"success": False, "error": f"No markets found for '{args.query}'"})
+            return
+
+        # Find best tradable market
+        target = None
+        if args.market_slug:
+            for m in markets:
+                slug = (m.slug or m.market_slug or "").lower().replace("-", " ")
+                if slug == args.market_slug.lower().replace("-", " "):
+                    target = m
+                    break
+            if not target:
+                _out({
+                    "success": False,
+                    "error": f"No market matched slug '{args.market_slug}'",
+                    "candidates": [_format_market(m) for m in markets[:5]],
+                })
+                return
+        else:
+            target = markets[0]
+
+        market_payload = _format_market(target, focus_outcome=args.outcome)
+        quality = target.quality
+
+        # Get orderbook snapshot
+        token_id = target.get_token_id(args.outcome)
+        orderbook_snapshot = None
+        if token_id:
+            try:
+                midpoint = client.get_midpoint(token_id)
+                spread = client.get_spread(token_id)
+                bid_depth = client.get_book_depth_usd(token_id, side="bids")
+                ask_depth = client.get_book_depth_usd(token_id, side="asks")
+                orderbook_snapshot = {
+                    "outcome": args.outcome,
+                    "midpoint": midpoint,
+                    "spread": spread,
+                    "bid_depth_usd": round(bid_depth, 2),
+                    "ask_depth_usd": round(ask_depth, 2),
+                }
+            except Exception:
+                pass
+
+        # Price history
+        price_history = None
+        if token_id:
+            try:
+                history = await client.get_price_history(token_id, interval="1w", fidelity=5)
+                price_history = history.get("history", [])[:100]
+            except Exception:
+                pass
+
+        # External thesis
+        external_thesis = None
+        if not args.skip_intel:
+            try:
+                external_thesis = await _run_thesis_research(
+                    args.query, args.outcome, market_payload
+                )
+            except Exception as e:
+                external_thesis = {"error": str(e)}
+
+        _out({
+            "success": True,
+            "query": args.query,
+            "market": market_payload,
+            "quality": _format_quality(target),
+            "tradability_verdict": "TRADABLE" if quality.is_tradable else "NOT TRADABLE",
+            "orderbook": orderbook_snapshot,
+            "price_history": price_history,
+            "external_thesis": external_thesis,
+            "next_step": (
+                f"Use polymarket skill: validate-trade --market-slug {target.slug or target.market_slug} "
+                f"--outcome {args.outcome} --amount-usd <amount> --price <price>"
+                if quality.is_tradable
+                else "Market not tradable. Check quality warnings."
+            ),
+        })
+    finally:
+        await client.close()
+
+
+async def cmd_compare(args):
+    """Side-by-side comparison of candidate markets for the same query."""
+    client = PMClient()
+    try:
+        markets = await client.search_markets(args.query, limit=args.limit)
+        if not markets:
+            _out({"success": False, "error": f"No markets found for '{args.query}'"})
+            return
+
+        comparisons = []
+        for market in markets:
+            quality = market.quality
+            entry = {
+                "slug": market.slug or market.market_slug,
+                "question": market.question,
+                "yes_price": market.yes_price,
+                "volume": market.volume_24hr or market.volume_num or market.volume or 0,
+                "liquidity": market.liquidity_num or market.liquidity or 0,
+                "end_date": market.end_date.isoformat() if market.end_date else None,
+                "quality": _format_quality(market),
+                "tradability_verdict": "TRADABLE" if quality.is_tradable else "NOT TRADABLE",
+            }
+
+            # Optional orderbook snapshot for focus outcome
+            outcome = args.outcome or "Yes"
+            token_id = market.get_token_id(outcome)
+            if token_id:
+                try:
+                    entry["orderbook"] = {
+                        "outcome": outcome,
+                        "midpoint": client.get_midpoint(token_id),
+                        "bid_depth_usd": round(client.get_book_depth_usd(token_id, "bids"), 2),
+                        "ask_depth_usd": round(client.get_book_depth_usd(token_id, "asks"), 2),
+                    }
+                except Exception:
+                    pass
+
+            comparisons.append(entry)
+
+        # Identify best market
+        tradable = [c for c in comparisons if c["tradability_verdict"] == "TRADABLE"]
+        best = None
+        if tradable:
+            best = max(tradable, key=lambda c: c["quality"]["tradability_score"])
+
+        _out({
+            "success": True,
+            "query": args.query,
+            "market_count": len(comparisons),
+            "tradable_count": len(tradable),
+            "comparisons": comparisons,
+            "best_market": best["slug"] if best else None,
+            "best_quality_score": best["quality"]["tradability_score"] if best else None,
+            "next_step": (
+                f"Best market: {best['slug']} (quality: {best['quality']['tradability_score']}). "
+                f"Use polymarket skill assess --market-slug {best['slug']} for full report."
+                if best
+                else "No tradable markets found. Consider broadening the search."
+            ),
+        })
+    finally:
+        await client.close()
+
+
+# ---------------------------------------------------------------------------
+# Argument parser
+# ---------------------------------------------------------------------------
+
 def main():
     parser = argparse.ArgumentParser(description="Polymarket deep research CLI")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p = sub.add_parser("research", help="Research a Polymarket market thesis")
+    # research
+    p = sub.add_parser("research", help="Quality-aware research across events, markets, and external sources")
     p.add_argument("--query", required=True)
     p.add_argument("--outcome", default=None, help="Optional focus outcome (Yes/No/etc.)")
     p.add_argument("--tag", default=None, help="Optional category tag")
@@ -259,10 +503,29 @@ def main():
     p.add_argument("--market-limit", type=int, default=3, help="Markets per event in the response")
     p.add_argument("--skip-intel", action="store_true", help="Skip external GigaBrain research")
 
+    # thesis
+    p = sub.add_parser("thesis", help="Generate structured trade thesis for a specific market")
+    p.add_argument("--query", required=True)
+    p.add_argument("--outcome", required=True, help="Focus outcome (Yes/No/etc.)")
+    p.add_argument("--market-slug", default=None, help="Exact market slug (optional, uses best match if omitted)")
+    p.add_argument("--skip-intel", action="store_true", help="Skip external GigaBrain research")
+
+    # compare
+    p = sub.add_parser("compare", help="Side-by-side comparison of candidate markets")
+    p.add_argument("--query", required=True)
+    p.add_argument("--outcome", default=None, help="Focus outcome for orderbook comparison")
+    p.add_argument("--limit", type=int, default=5, help="Max markets to compare")
+
     args = parser.parse_args()
 
+    handler = {
+        "research": cmd_research,
+        "thesis": cmd_thesis,
+        "compare": cmd_compare,
+    }[args.command]
+
     try:
-        asyncio.run(cmd_research(args))
+        asyncio.run(handler(args))
     except Exception as e:
         _out({"success": False, "error": str(e)})
         sys.exit(1)

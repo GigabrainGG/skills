@@ -1,8 +1,8 @@
-"""Polymarket service layer - market data and trading.
+"""Polymarket service layer - market data, quality scoring, and trading.
 
 Self-contained module using:
 - Gamma API (httpx) for market discovery
-- CLOB API (py-clob-client) for trading
+- CLOB API (py-clob-client) for trading & orderbook
 - Data API (httpx) for positions/trades
 
 No daemon-specific dependencies.
@@ -18,9 +18,13 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 import httpx
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, PrivateAttr, field_validator
 
 logger = logging.getLogger("pm_services")
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
 
 STOPWORDS = {
     "a", "an", "and", "are", "be", "before", "by", "for", "from", "hit", "in",
@@ -64,6 +68,15 @@ TAG_KEYWORDS: dict[str, set[str]] = {
     },
 }
 
+# Quality thresholds
+MIN_LIQUIDITY_USD = 5_000
+MAX_SPREAD_LIMIT = 0.10
+BOOK_DEPTH_MULTIPLIER = 1.5
+
+
+# ---------------------------------------------------------------------------
+# Text normalization
+# ---------------------------------------------------------------------------
 
 def _normalize_text(value: str | None) -> str:
     if not value:
@@ -162,39 +175,165 @@ def _extract_tag_text(tags: list[Any] | None) -> list[str]:
     return [value for value in values if value]
 
 
-def _score_query_text(query: str, text: str) -> float:
+# ---------------------------------------------------------------------------
+# Relevance scoring (replaces _score_query_text)
+# ---------------------------------------------------------------------------
+
+def score_relevance(query: str, text: str, slug: str | None = None) -> float:
+    """Score relevance of text to query on 0-100 scale.
+
+    Components:
+    - Term coverage (60%): fraction of query terms found in text
+    - Exact substring (25%): full query appears as substring
+    - Slug match (15%): query terms appear in slug
+    """
     normalized_query = _normalize_text(query)
     normalized_text = _normalize_text(text)
     if not normalized_query or not normalized_text:
         return 0.0
 
     terms = _expand_query_terms(query)
+    if not terms:
+        return 0.0
+
     text_tokens = set(normalized_text.split())
-    score = 0.0
-    matched_terms = 0
 
-    if normalized_query in normalized_text:
-        score += 12.0
-
+    # Term coverage (0-60)
+    matched = 0
     for term in terms:
         if " " in term:
             if term in normalized_text:
-                matched_terms += 1
-                score += 5.0
-            continue
+                matched += 1
+        elif term in text_tokens:
+            matched += 1
 
-        if term in text_tokens:
-            matched_terms += 1
-            score += 3.0 if any(ch.isdigit() for ch in term) else 2.0
-
-    if matched_terms == 0:
+    if matched == 0:
         return 0.0
 
-    if matched_terms >= 2:
-        score += 3.0
+    term_coverage = (matched / len(terms)) * 60.0
 
+    # Exact substring match (0-25)
+    exact_bonus = 25.0 if normalized_query in normalized_text else 0.0
+
+    # Slug match (0-15)
+    slug_bonus = 0.0
+    if slug:
+        normalized_slug = _normalize_text(slug)
+        slug_tokens = set(normalized_slug.split())
+        slug_matched = sum(1 for t in terms if t in slug_tokens or t in normalized_slug)
+        if slug_matched > 0:
+            slug_bonus = min(15.0, (slug_matched / len(terms)) * 15.0)
+
+    return min(100.0, term_coverage + exact_bonus + slug_bonus)
+
+
+# ---------------------------------------------------------------------------
+# Quality scoring
+# ---------------------------------------------------------------------------
+
+def _liquidity_score(liquidity_usd: float) -> float:
+    """Score liquidity on 0-30 scale. Log-scaled.
+    $0→0, $10K→15, $50K≈20, $1M+→30
+    """
+    if liquidity_usd <= 0:
+        return 0.0
+    return min(30.0, 30.0 * math.log10(1 + liquidity_usd / 100) / math.log10(10001))
+
+
+def _volume_score(volume_24h: float) -> float:
+    """Score 24h volume on 0-25 scale. Log-scaled."""
+    if volume_24h <= 0:
+        return 0.0
+    return min(25.0, 25.0 * math.log10(1 + volume_24h / 100) / math.log10(10001))
+
+
+def _spread_score(spread: float | None) -> float:
+    """Score spread on 0-25 scale. Lower spread = higher score."""
+    if spread is None:
+        return 12.0  # Unknown spread gets middle score
+    spread = abs(spread)
+    if spread <= 0.01:
+        return 25.0
+    if spread <= 0.03:
+        return 20.0
+    if spread <= 0.05:
+        return 15.0
+    if spread <= 0.10:
+        return 8.0
+    return 0.0
+
+
+def _status_score(active: bool, closed: bool, accepting_orders: bool, ready: bool) -> float:
+    """Score market status on 0-20 scale."""
+    score = 0.0
+    if active and not closed:
+        score += 10.0
+    if accepting_orders:
+        score += 5.0
+    if ready:
+        score += 5.0
     return score
 
+
+def compute_market_quality(
+    liquidity_usd: float,
+    volume_24h: float,
+    spread: float | None,
+    active: bool = True,
+    closed: bool = False,
+    accepting_orders: bool = True,
+    ready: bool = True,
+) -> "MarketQuality":
+    """Compute quality score for a market."""
+    liq = _liquidity_score(liquidity_usd)
+    vol = _volume_score(volume_24h)
+    spr = _spread_score(spread)
+    sta = _status_score(active, closed, accepting_orders, ready)
+
+    quality_raw = liq + vol + spr + sta
+
+    warnings: list[str] = []
+
+    if liquidity_usd < MIN_LIQUIDITY_USD:
+        warnings.append(f"Low liquidity: ${liquidity_usd:,.0f} (min ${MIN_LIQUIDITY_USD:,})")
+    if volume_24h <= 0:
+        warnings.append("No 24h volume")
+    if spread is not None and spread > MAX_SPREAD_LIMIT:
+        warnings.append(f"Wide spread: {spread:.2%} (max {MAX_SPREAD_LIMIT:.0%})")
+    if not active or closed:
+        warnings.append("Market not active or closed")
+    if not accepting_orders:
+        warnings.append("Market not accepting orders")
+    if not ready:
+        warnings.append("Market not ready")
+
+    is_tradable = (
+        active
+        and not closed
+        and accepting_orders
+        and liquidity_usd >= MIN_LIQUIDITY_USD
+    )
+
+    return MarketQuality(
+        tradability_score=round(quality_raw, 1),
+        liquidity_usd=round(liquidity_usd, 2),
+        volume_24h_usd=round(volume_24h, 2),
+        spread_pct=round(spread, 4) if spread is not None else None,
+        is_tradable=is_tradable,
+        warnings=warnings,
+    )
+
+
+def compute_composite_score(relevance: float, quality_score: float) -> float:
+    """Geometric mean of relevance and quality. Both axes must be nonzero."""
+    if relevance <= 0 or quality_score <= 0:
+        return 0.0
+    return math.sqrt(relevance * quality_score)
+
+
+# ---------------------------------------------------------------------------
+# Market search text helpers
+# ---------------------------------------------------------------------------
 
 def _market_search_text(market: "Market") -> str:
     parts = [
@@ -239,6 +378,63 @@ def _raw_market_search_text(market: dict) -> str:
     return " ".join(part for part in parts if part)
 
 
+# ---------------------------------------------------------------------------
+# Market ranking (quality-aware)
+# ---------------------------------------------------------------------------
+
+def _get_market_liquidity(market: "Market") -> float:
+    return float(market.liquidity_num or market.liquidity or 0)
+
+
+def _get_market_volume(market: "Market") -> float:
+    return float(market.volume_24hr or market.volume_num or market.volume or 0)
+
+
+def _get_market_spread(market: "Market") -> float | None:
+    if market.spread is not None:
+        try:
+            return float(market.spread)
+        except (ValueError, TypeError):
+            return None
+    if market.best_bid is not None and market.best_ask is not None:
+        try:
+            return float(market.best_ask) - float(market.best_bid)
+        except (ValueError, TypeError):
+            return None
+    return None
+
+
+def rank_markets(query: str, markets: list["Market"], limit: int) -> list["Market"]:
+    """Rank markets by composite score (geometric mean of relevance and quality)."""
+    scored: list[tuple[float, "Market", "MarketQuality"]] = []
+    for market in markets:
+        text = _market_search_text(market)
+        slug = market.slug or market.market_slug
+        relevance = score_relevance(query, text, slug)
+        if relevance <= 0:
+            continue
+
+        quality = compute_market_quality(
+            liquidity_usd=_get_market_liquidity(market),
+            volume_24h=_get_market_volume(market),
+            spread=_get_market_spread(market),
+            active=market.active,
+            closed=market.closed,
+            accepting_orders=market.accepting_orders,
+            ready=market.ready,
+        )
+        composite = compute_composite_score(relevance, quality.tradability_score)
+        market._quality = quality  # Attach quality info
+        scored.append((composite, market, quality))
+
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return [market for _, market, _ in scored[:limit]]
+
+
+# ---------------------------------------------------------------------------
+# Event ranking helpers
+# ---------------------------------------------------------------------------
+
 def _is_live_public_market(market: dict) -> bool:
     return (
         bool(market.get("active"))
@@ -252,13 +448,14 @@ def _prepare_public_event(query: str, event: dict) -> dict | None:
     scored_markets: list[tuple[int, float, float, float, dict]] = []
 
     for market in event.get("markets") or []:
-        score = _score_query_text(query, _raw_market_search_text(market))
+        text = _raw_market_search_text(market)
+        rel = score_relevance(query, text, market.get("slug") or market.get("marketSlug"))
         volume = float(market.get("volume24hr") or market.get("volume") or 0)
         liquidity = float(market.get("liquidityClob") or market.get("liquidity") or 0)
         scored_markets.append(
             (
                 1 if _is_live_public_market(market) else 0,
-                score,
+                rel,
                 volume,
                 liquidity,
                 market,
@@ -277,7 +474,7 @@ def _prepare_public_event(query: str, event: dict) -> dict | None:
     prepared = dict(event)
     prepared["markets"] = live_markets
     prepared["_live_market_count"] = len(live_markets)
-    prepared["_query_score"] = max(score for _, score, _, _, _ in scored_markets)
+    prepared["_query_score"] = max(rel for _, rel, _, _, _ in scored_markets)
     prepared["_max_market_volume"] = max(volume for _, _, volume, _, _ in scored_markets)
     prepared["_max_market_liquidity"] = max(liquidity for _, _, _, liquidity, _ in scored_markets)
     return prepared
@@ -291,8 +488,9 @@ def _rank_public_events(query: str, events: list[dict], limit: int) -> list[dict
         if prepared is None:
             continue
 
-        event_score = _score_query_text(query, _event_search_text(prepared))
-        query_score = max(event_score, prepared.get("_query_score", 0.0))
+        event_text = _event_search_text(prepared)
+        event_rel = score_relevance(query, event_text, prepared.get("slug"))
+        query_score = max(event_rel, prepared.get("_query_score", 0.0))
         event_volume = float(prepared.get("volume24hr") or prepared.get("volume") or 0)
         market_volume = float(prepared.get("_max_market_volume") or 0)
         ranked.append(
@@ -314,12 +512,13 @@ def _sort_event_markets(query: str, event: dict) -> dict:
     ranked: list[tuple[float, float, float, dict]] = []
 
     for market in markets:
-        score = _score_query_text(query, _raw_market_search_text(market))
-        if score <= 0:
+        text = _raw_market_search_text(market)
+        rel = score_relevance(query, text, market.get("slug") or market.get("marketSlug"))
+        if rel <= 0:
             continue
         volume = float(market.get("volume24hr") or market.get("volume") or 0)
         liquidity = float(market.get("liquidity") or 0)
-        ranked.append((score, volume, liquidity, market))
+        ranked.append((rel, volume, liquidity, market))
 
     if not ranked:
         return event
@@ -329,6 +528,25 @@ def _sort_event_markets(query: str, event: dict) -> dict:
     sorted_event["markets"] = [market for _, _, _, market in ranked]
     return sorted_event
 
+
+def _rank_events(query: str, events: list[dict], limit: int) -> list[dict]:
+    ranked: list[tuple[float, float, float, dict]] = []
+    for event in events:
+        text = _event_search_text(event)
+        rel = score_relevance(query, text, event.get("slug"))
+        if rel <= 0:
+            continue
+        volume = float(event.get("volume24hr") or event.get("volume") or 0)
+        liquidity = float(event.get("liquidity") or 0)
+        ranked.append((rel, volume, liquidity, _sort_event_markets(query, event)))
+
+    ranked.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+    return [event for _, _, _, event in ranked[:limit]]
+
+
+# ---------------------------------------------------------------------------
+# Dedup helpers
+# ---------------------------------------------------------------------------
 
 def _dedupe_markets(markets: list["Market"]) -> list["Market"]:
     seen: set[str] = set()
@@ -354,33 +572,9 @@ def _dedupe_events(events: list[dict]) -> list[dict]:
     return deduped
 
 
-def _rank_markets(query: str, markets: list["Market"], limit: int) -> list["Market"]:
-    ranked: list[tuple[float, float, float, Market]] = []
-    for market in markets:
-        score = _score_query_text(query, _market_search_text(market))
-        if score <= 0:
-            continue
-        volume = market.volume_24hr or market.volume_num or market.volume or 0
-        liquidity = market.liquidity_num or market.liquidity or 0
-        ranked.append((score, volume, liquidity, market))
-
-    ranked.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
-    return [market for _, _, _, market in ranked[:limit]]
-
-
-def _rank_events(query: str, events: list[dict], limit: int) -> list[dict]:
-    ranked: list[tuple[float, float, float, dict]] = []
-    for event in events:
-        score = _score_query_text(query, _event_search_text(event))
-        if score <= 0:
-            continue
-        volume = float(event.get("volume24hr") or event.get("volume") or 0)
-        liquidity = float(event.get("liquidity") or 0)
-        ranked.append((score, volume, liquidity, _sort_event_markets(query, event)))
-
-    ranked.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
-    return [event for _, _, _, event in ranked[:limit]]
-
+# ---------------------------------------------------------------------------
+# Misc helpers
+# ---------------------------------------------------------------------------
 
 def _coerce_jsonable(value: Any) -> Any:
     if value is None or isinstance(value, (str, int, float, bool, list, dict)):
@@ -397,6 +591,7 @@ def _coerce_jsonable(value: Any) -> Any:
         except Exception:
             pass
     return value
+
 
 # ---------------------------------------------------------------------------
 # Models
@@ -415,6 +610,16 @@ class Token(BaseModel):
 
     class Config:
         populate_by_name = True
+
+
+class MarketQuality(BaseModel):
+    """Quality assessment for a market."""
+    tradability_score: float = 0.0
+    liquidity_usd: float = 0.0
+    volume_24h_usd: float = 0.0
+    spread_pct: float | None = None
+    is_tradable: bool = False
+    warnings: list[str] = Field(default_factory=list)
 
 
 class Market(BaseModel):
@@ -445,6 +650,18 @@ class Market(BaseModel):
     liquidity: float | None = None
     volume_num: float | None = Field(default=None, alias="volumeNum")
     liquidity_num: float | None = Field(default=None, alias="liquidityNum")
+
+    # Extended fields from Gamma API (previously ignored)
+    best_bid: float | None = Field(default=None, alias="bestBid")
+    best_ask: float | None = Field(default=None, alias="bestAsk")
+    spread: float | None = Field(default=None, alias="spread")
+    open_interest: float | None = Field(default=None, alias="openInterest")
+    comment_count: int | None = Field(default=None, alias="commentCount")
+    accepting_orders: bool = Field(default=True, alias="acceptingOrders")
+    ready: bool = Field(default=True, alias="ready")
+
+    # Attached at ranking time, not from API
+    _quality: MarketQuality | None = PrivateAttr(default=None)
 
     class Config:
         populate_by_name = True
@@ -495,6 +712,37 @@ class Market(BaseModel):
                 return None
         return v
 
+    @field_validator("best_bid", "best_ask", "spread", "open_interest", mode="before")
+    @classmethod
+    def parse_optional_float(cls, v):
+        if v is None or v == "":
+            return None
+        try:
+            return float(v)
+        except (ValueError, TypeError):
+            return None
+
+    @field_validator("comment_count", mode="before")
+    @classmethod
+    def parse_optional_int(cls, v):
+        if v is None or v == "":
+            return None
+        try:
+            return int(v)
+        except (ValueError, TypeError):
+            return None
+
+    @field_validator("accepting_orders", "ready", mode="before")
+    @classmethod
+    def parse_bool_default_true(cls, v):
+        if v is None:
+            return True
+        if isinstance(v, bool):
+            return v
+        if isinstance(v, str):
+            return v.lower() in ("true", "1", "yes")
+        return bool(v)
+
     @property
     def yes_price(self) -> float | None:
         if self.tokens:
@@ -519,6 +767,21 @@ class Market(BaseModel):
                 return None
         return None
 
+    @property
+    def quality(self) -> MarketQuality:
+        """Get or compute quality assessment."""
+        if self._quality is not None:
+            return self._quality
+        return compute_market_quality(
+            liquidity_usd=_get_market_liquidity(self),
+            volume_24h=_get_market_volume(self),
+            spread=_get_market_spread(self),
+            active=self.active,
+            closed=self.closed,
+            accepting_orders=self.accepting_orders,
+            ready=self.ready,
+        )
+
     def get_token_id(self, outcome: str) -> str | None:
         """Resolve an outcome name (Yes/No/etc.) to its CLOB token_id."""
         outcome_lower = outcome.strip().lower()
@@ -534,6 +797,147 @@ class Market(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Pre-trade validation
+# ---------------------------------------------------------------------------
+
+class PreTradeCheck(BaseModel):
+    name: str
+    passed: bool
+    message: str
+    bypassable: bool = False
+
+
+class PreTradeResult(BaseModel):
+    can_trade: bool
+    checks: list[PreTradeCheck]
+    warnings: list[str] = Field(default_factory=list)
+
+
+def validate_pre_trade(
+    market: Market,
+    outcome: str,
+    amount_usd: float,
+    price: float | None = None,
+    is_market_order: bool = False,
+    skip_liquidity_check: bool = False,
+    skip_spread_check: bool = False,
+    usdc_balance: float | None = None,
+    book_depth_usd: float | None = None,
+) -> PreTradeResult:
+    """Run pre-trade validation cascade. Returns structured result."""
+    checks: list[PreTradeCheck] = []
+    warnings: list[str] = []
+
+    # 1. Input validation
+    if not outcome or not outcome.strip():
+        checks.append(PreTradeCheck(name="input", passed=False, message="Outcome must be non-empty"))
+    elif amount_usd <= 0:
+        checks.append(PreTradeCheck(name="input", passed=False, message="Amount must be > 0"))
+    elif price is not None and not is_market_order and not (0.01 <= price <= 0.99):
+        checks.append(PreTradeCheck(name="input", passed=False, message=f"Price {price} out of range (0.01-0.99)"))
+    else:
+        checks.append(PreTradeCheck(name="input", passed=True, message="Input valid"))
+
+    if not checks[-1].passed:
+        return PreTradeResult(can_trade=False, checks=checks, warnings=warnings)
+
+    # 2. Market status (non-bypassable)
+    if not market.active:
+        checks.append(PreTradeCheck(name="market_status", passed=False, message="Market is not active"))
+    elif market.closed:
+        checks.append(PreTradeCheck(name="market_status", passed=False, message="Market is closed"))
+    elif market.archived:
+        checks.append(PreTradeCheck(name="market_status", passed=False, message="Market is archived"))
+    elif not market.accepting_orders:
+        checks.append(PreTradeCheck(name="market_status", passed=False, message="Market not accepting orders"))
+    else:
+        end = market.end_date
+        if end and end < datetime.now(UTC):
+            checks.append(PreTradeCheck(name="market_status", passed=False, message="Market has expired"))
+        else:
+            checks.append(PreTradeCheck(name="market_status", passed=True, message="Market active and accepting orders"))
+
+    if not checks[-1].passed:
+        return PreTradeResult(can_trade=False, checks=checks, warnings=warnings)
+
+    # 3. Outcome resolution
+    token_id = market.get_token_id(outcome)
+    if not token_id:
+        available = market.outcomes or ([t.outcome for t in market.tokens] if market.tokens else [])
+        checks.append(PreTradeCheck(
+            name="outcome", passed=False,
+            message=f"Outcome '{outcome}' not found. Available: {available}",
+        ))
+        return PreTradeResult(can_trade=False, checks=checks, warnings=warnings)
+    checks.append(PreTradeCheck(name="outcome", passed=True, message=f"Outcome '{outcome}' resolved to token"))
+
+    # 4. Liquidity check (bypassable)
+    liquidity = _get_market_liquidity(market)
+    if liquidity < MIN_LIQUIDITY_USD:
+        if skip_liquidity_check:
+            warnings.append(f"Liquidity check bypassed: ${liquidity:,.0f} < ${MIN_LIQUIDITY_USD:,}")
+            checks.append(PreTradeCheck(
+                name="liquidity", passed=True, bypassable=True,
+                message=f"BYPASSED: Liquidity ${liquidity:,.0f} below ${MIN_LIQUIDITY_USD:,} minimum",
+            ))
+        else:
+            checks.append(PreTradeCheck(
+                name="liquidity", passed=False, bypassable=True,
+                message=f"Liquidity ${liquidity:,.0f} below ${MIN_LIQUIDITY_USD:,} minimum. Use --skip-liquidity-check to override.",
+            ))
+            return PreTradeResult(can_trade=False, checks=checks, warnings=warnings)
+    else:
+        checks.append(PreTradeCheck(name="liquidity", passed=True, message=f"Liquidity OK: ${liquidity:,.0f}"))
+
+    # 5. Spread check (bypassable) — applies to both limit and market orders
+    market_spread = _get_market_spread(market)
+    if market_spread is not None and market_spread > MAX_SPREAD_LIMIT:
+        if skip_spread_check:
+            warnings.append(f"Spread check bypassed: {market_spread:.2%} > {MAX_SPREAD_LIMIT:.0%}")
+            checks.append(PreTradeCheck(
+                name="spread", passed=True, bypassable=True,
+                message=f"BYPASSED: Spread {market_spread:.2%} exceeds {MAX_SPREAD_LIMIT:.0%} limit",
+            ))
+        else:
+            order_kind = "market order" if is_market_order else "limit order"
+            checks.append(PreTradeCheck(
+                name="spread", passed=False, bypassable=True,
+                message=f"Spread {market_spread:.2%} exceeds {MAX_SPREAD_LIMIT:.0%} limit for {order_kind}. Use --skip-spread-check to override.",
+            ))
+            return PreTradeResult(can_trade=False, checks=checks, warnings=warnings)
+    else:
+        spread_msg = f"Spread OK: {market_spread:.2%}" if market_spread is not None else "Spread: unknown (not checked)"
+        checks.append(PreTradeCheck(name="spread", passed=True, message=spread_msg))
+
+    # 6. Book depth check for market orders
+    if is_market_order and book_depth_usd is not None:
+        required = amount_usd * BOOK_DEPTH_MULTIPLIER
+        if book_depth_usd < required:
+            checks.append(PreTradeCheck(
+                name="book_depth", passed=False,
+                message=f"Book depth ${book_depth_usd:,.2f} < required ${required:,.2f} (1.5x order size)",
+            ))
+            return PreTradeResult(can_trade=False, checks=checks, warnings=warnings)
+        checks.append(PreTradeCheck(name="book_depth", passed=True, message=f"Book depth OK: ${book_depth_usd:,.2f}"))
+    elif is_market_order:
+        warnings.append("Book depth not checked (orderbook data unavailable)")
+
+    # 7. Balance check
+    if usdc_balance is not None:
+        if usdc_balance < amount_usd:
+            checks.append(PreTradeCheck(
+                name="balance", passed=False,
+                message=f"Insufficient balance: ${usdc_balance:,.2f} < ${amount_usd:,.2f} needed",
+            ))
+            return PreTradeResult(can_trade=False, checks=checks, warnings=warnings)
+        checks.append(PreTradeCheck(name="balance", passed=True, message=f"Balance OK: ${usdc_balance:,.2f}"))
+    else:
+        warnings.append("Balance not checked (trading not configured or check skipped)")
+
+    return PreTradeResult(can_trade=True, checks=checks, warnings=warnings)
+
+
+# ---------------------------------------------------------------------------
 # API URLs
 # ---------------------------------------------------------------------------
 GAMMA_API_URL = "https://gamma-api.polymarket.com"
@@ -541,6 +945,130 @@ CLOB_API_URL = "https://clob.polymarket.com"
 DATA_API_URL = "https://data-api.polymarket.com"
 BRIDGE_API_URL = "https://bridge.polymarket.com"
 GEOBLOCK_API_URL = "https://polymarket.com/api/geoblock"
+
+# ---------------------------------------------------------------------------
+# Polygon web3 constants (lazy-loaded for CTF token operations)
+# ---------------------------------------------------------------------------
+POLYGON_RPC_URL = "https://polygon-rpc.com"
+CTF_ADDRESS = "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045"
+NEG_RISK_ADAPTER_ADDRESS = "0xC5d563A36AE78145C45a50134d48A1215220f80a"
+USDC_E_ADDRESS = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
+ZERO_BYTES32 = "0x" + "00" * 32
+BINARY_PARTITION = [1, 2]
+
+# Minimal ABIs for CTF operations
+CTF_REDEEM_ABI = [
+    {
+        "inputs": [
+            {"name": "collateralToken", "type": "address"},
+            {"name": "parentCollectionId", "type": "bytes32"},
+            {"name": "conditionId", "type": "bytes32"},
+            {"name": "indexSets", "type": "uint256[]"},
+        ],
+        "name": "redeemPositions",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function",
+    }
+]
+
+CTF_SPLIT_MERGE_ABI = [
+    {
+        "inputs": [
+            {"name": "collateralToken", "type": "address"},
+            {"name": "parentCollectionId", "type": "bytes32"},
+            {"name": "conditionId", "type": "bytes32"},
+            {"name": "indexSets", "type": "uint256[]"},
+            {"name": "amount", "type": "uint256"},
+        ],
+        "name": "splitPosition",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function",
+    },
+    {
+        "inputs": [
+            {"name": "collateralToken", "type": "address"},
+            {"name": "parentCollectionId", "type": "bytes32"},
+            {"name": "conditionId", "type": "bytes32"},
+            {"name": "indexSets", "type": "uint256[]"},
+            {"name": "amount", "type": "uint256"},
+        ],
+        "name": "mergePositions",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function",
+    },
+]
+
+NEG_RISK_ADAPTER_ABI = [
+    {
+        "inputs": [
+            {"name": "conditionId", "type": "bytes32"},
+            {"name": "amount", "type": "uint256"},
+        ],
+        "name": "splitPosition",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function",
+    },
+    {
+        "inputs": [
+            {"name": "conditionId", "type": "bytes32"},
+            {"name": "amount", "type": "uint256"},
+        ],
+        "name": "mergePositions",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function",
+    },
+]
+
+ERC20_APPROVE_ABI = [
+    {
+        "inputs": [
+            {"name": "spender", "type": "address"},
+            {"name": "amount", "type": "uint256"},
+        ],
+        "name": "approve",
+        "outputs": [{"name": "", "type": "bool"}],
+        "stateMutability": "nonpayable",
+        "type": "function",
+    },
+    {
+        "inputs": [
+            {"name": "owner", "type": "address"},
+            {"name": "spender", "type": "address"},
+        ],
+        "name": "allowance",
+        "outputs": [{"name": "", "type": "uint256"}],
+        "stateMutability": "view",
+        "type": "function",
+    },
+]
+
+CTF_APPROVAL_ABI = [
+    {
+        "inputs": [
+            {"name": "operator", "type": "address"},
+            {"name": "approved", "type": "bool"},
+        ],
+        "name": "setApprovalForAll",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function",
+    },
+    {
+        "inputs": [
+            {"name": "account", "type": "address"},
+            {"name": "operator", "type": "address"},
+        ],
+        "name": "isApprovedForAll",
+        "outputs": [{"name": "", "type": "bool"}],
+        "stateMutability": "view",
+        "type": "function",
+    },
+]
 
 
 # ---------------------------------------------------------------------------
@@ -553,6 +1081,7 @@ class PMClient:
         timeout: int = 30,
         private_key: str = "",
         funder_address: str = "",
+        signature_type: int = 0,
         builder_api_key: str = "",
         builder_secret: str = "",
         builder_passphrase: str = "",
@@ -564,6 +1093,8 @@ class PMClient:
         self._clob = None
         self._builder_client = None
         self._wallet_address: str = funder_address
+        self._signature_type: int = signature_type
+        self._private_key: str = private_key
         self.builder_config = self._build_builder_config(
             builder_api_key=builder_api_key,
             builder_secret=builder_secret,
@@ -628,7 +1159,7 @@ class PMClient:
                 key=private_key,
                 chain_id=POLYGON,
                 funder=funder_address,
-                signature_type=0,  # EOA wallet
+                signature_type=self._signature_type,
                 builder_config=self.builder_config,
             )
             creds = self._clob.create_or_derive_api_creds()
@@ -667,6 +1198,8 @@ class PMClient:
         resp = await self.http.post(url, json=json_body)
         resp.raise_for_status()
         return resp.json()
+
+    # -- Gamma API (raw) --
 
     async def raw_markets(
         self,
@@ -740,7 +1273,7 @@ class PMClient:
         sort_by: SortBy | None = None, ascending: bool = False,
         min_liquidity: float | None = None, min_volume: float | None = None,
     ) -> list[Market]:
-        params: dict[str, Any] = {"limit": limit * 3, "active": active, "closed": False}
+        params: dict[str, Any] = {"limit": limit, "active": active, "closed": False}
         if tag:
             params["tag"] = tag
         if sort_by:
@@ -769,7 +1302,8 @@ class PMClient:
         if not normalized_query:
             return []
 
-        params: dict[str, Any] = {"query": query, "limit": limit * 5, "active": True, "closed": False}
+        fetch_limit = limit * 15
+        params: dict[str, Any] = {"query": query, "limit": fetch_limit, "active": True, "closed": False}
         if sort_by:
             params["order"] = sort_by
             params["ascending"] = False
@@ -794,27 +1328,17 @@ class PMClient:
         if inferred_tags:
             for tag in inferred_tags[:2]:
                 candidates.extend(await self.get_markets(
-                    limit=max(limit * 25, 150),
+                    limit=fetch_limit,
                     tag=tag,
                     sort_by="volume",
                 ))
-                candidates.extend(await self.get_markets(
-                    limit=max(limit * 10, 75),
-                    tag=tag,
-                    sort_by="updatedAt",
-                ))
         else:
             candidates.extend(await self.get_markets(
-                limit=max(limit * 40, 250),
+                limit=fetch_limit,
                 sort_by=sort_by or "volume",
             ))
-            candidates.extend(await self.get_markets(
-                limit=max(limit * 15, 100),
-                sort_by="updatedAt",
-            ))
 
-        ranked = _rank_markets(query, _dedupe_markets(candidates), limit)
-        return ranked
+        return rank_markets(query, _dedupe_markets(candidates), limit)
 
     async def get_events(self, query: str | None = None, limit: int = 20, tag: str | None = None) -> list[dict]:
         """Search events via Gamma API. Returns raw event dicts with nested markets."""
@@ -833,10 +1357,11 @@ class PMClient:
 
         candidates = list(direct_events)
         inferred_tags = [tag] if tag else _infer_tags(query)
+        fetch_limit = limit * 10
         if inferred_tags:
             for inferred_tag in inferred_tags[:2]:
                 params = {
-                    "limit": max(limit * 20, 100),
+                    "limit": fetch_limit,
                     "active": True,
                     "closed": False,
                     "tag": inferred_tag,
@@ -850,7 +1375,7 @@ class PMClient:
                     continue
         else:
             params = {
-                "limit": max(limit * 20, 100),
+                "limit": fetch_limit,
                 "active": True,
                 "closed": False,
                 "order": "volume24hr",
@@ -910,6 +1435,25 @@ class PMClient:
     async def get_recently_updated(self, limit: int = 20) -> list[Market]:
         return await self.get_markets(limit=limit, sort_by="updatedAt")
 
+    async def get_top_markets(self, limit: int = 20, tag: str | None = None) -> list[Market]:
+        """Get top markets by quality score. Unlike trending, this uses the full quality engine."""
+        markets = await self.get_markets(limit=limit * 3, active=True, tag=tag, sort_by="volume")
+        scored: list[tuple[float, Market]] = []
+        for market in markets:
+            quality = compute_market_quality(
+                liquidity_usd=_get_market_liquidity(market),
+                volume_24h=_get_market_volume(market),
+                spread=_get_market_spread(market),
+                active=market.active,
+                closed=market.closed,
+                accepting_orders=market.accepting_orders,
+                ready=market.ready,
+            )
+            market._quality = quality
+            scored.append((quality.tradability_score, market))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [m for _, m in scored[:limit]]
+
     # -- CLOB API (prices, orderbook) --
 
     def get_orderbook(self, token_id: str) -> dict:
@@ -947,6 +1491,20 @@ class PMClient:
             return float(tick) if tick else 0.01
         except Exception:
             return 0.01
+
+    def get_book_depth_usd(self, token_id: str, side: str = "bids") -> float:
+        """Calculate total USD depth available on one side of the orderbook."""
+        book = self.get_orderbook(token_id)
+        levels = book.get(side) or []
+        total_usd = 0.0
+        for level in levels:
+            try:
+                price = float(level.get("price", 0))
+                size = float(level.get("size", 0))
+                total_usd += price * size
+            except (ValueError, TypeError):
+                continue
+        return total_usd
 
     async def get_market_trades_events(
         self, condition_id: str, limit: int | None = None
@@ -1093,6 +1651,10 @@ class PMClient:
     async def get_bridge_status(self, deposit_address: str) -> list[dict]:
         data = await self._get(f"{BRIDGE_API_URL}/status/{deposit_address}")
         return data.get("transactions", [])
+
+    async def initiate_bridge_withdrawal(self, address: str) -> dict[str, Any]:
+        """Initiate a withdrawal from Polygon via the bridge. Returns deposit address info."""
+        return await self._post(f"{BRIDGE_API_URL}/withdraw", {"address": address})
 
     async def get_geoblock(self, ip: str | None = None) -> dict[str, Any]:
         params = {"ip": ip} if ip else None
@@ -1267,7 +1829,6 @@ class PMClient:
 
         self._require_trading()
 
-        # Validate and round price to tick size
         tick = self.get_tick_size(token_id)
         price = self._round_to_tick(price, tick)
         size = math.floor(size * 100) / 100
@@ -1390,3 +1951,205 @@ class PMClient:
         except Exception as e:
             logger.error(f"Failed to get balance: {e}")
             return 0.0
+
+    # -- Web3 CTF Operations --
+
+    def _get_w3(self):
+        """Lazy Web3 instance for Polygon with POA middleware."""
+        if not hasattr(self, "_w3") or self._w3 is None:
+            from web3 import Web3
+            from web3.middleware import ExtraDataToPOAMiddleware
+
+            self._w3 = Web3(Web3.HTTPProvider(POLYGON_RPC_URL))
+            self._w3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
+        return self._w3
+
+    def _require_web3(self) -> None:
+        """Assert private key is available for web3 transactions."""
+        if not self._private_key:
+            raise RuntimeError(
+                "Web3 operations require EVM_PRIVATE_KEY to be set."
+            )
+
+    def _sign_and_send_tx(self, tx: dict) -> dict[str, Any]:
+        """Sign, send, and wait for a transaction receipt. Returns tx_hash, status, explorer_url."""
+        from eth_account import Account
+
+        self._require_web3()
+        w3 = self._get_w3()
+        account = Account.from_key(self._private_key)
+
+        tx["from"] = account.address
+        if "nonce" not in tx:
+            tx["nonce"] = w3.eth.get_transaction_count(account.address)
+        if "gas" not in tx:
+            tx["gas"] = w3.eth.estimate_gas(tx)
+        if "gasPrice" not in tx:
+            tx["gasPrice"] = w3.eth.gas_price
+
+        signed = account.sign_transaction(tx)
+        tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+        receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+
+        return {
+            "tx_hash": receipt.transactionHash.hex(),
+            "status": "success" if receipt.status == 1 else "failed",
+            "gas_used": receipt.gasUsed,
+            "explorer_url": f"https://polygonscan.com/tx/0x{receipt.transactionHash.hex()}",
+        }
+
+    def redeem_positions(
+        self,
+        condition_id: str,
+        index_sets: list[int] | None = None,
+    ) -> dict[str, Any]:
+        """Redeem resolved CTF positions back to USDC.e."""
+        self._require_web3()
+        w3 = self._get_w3()
+
+        ctf = w3.eth.contract(
+            address=w3.to_checksum_address(CTF_ADDRESS),
+            abi=CTF_REDEEM_ABI,
+        )
+
+        if index_sets is None:
+            index_sets = BINARY_PARTITION
+
+        tx = ctf.functions.redeemPositions(
+            w3.to_checksum_address(USDC_E_ADDRESS),
+            bytes.fromhex(ZERO_BYTES32[2:]),
+            bytes.fromhex(condition_id if not condition_id.startswith("0x") else condition_id[2:]),
+            index_sets,
+        ).build_transaction({"chainId": 137})
+
+        return self._sign_and_send_tx(tx)
+
+    def _to_condition_bytes(self, condition_id: str) -> bytes:
+        raw = condition_id[2:] if condition_id.startswith("0x") else condition_id
+        return bytes.fromhex(raw)
+
+    def _ensure_usdc_approval(self, spender: str, amount: int) -> dict[str, Any] | None:
+        """Check USDC.e allowance for spender, approve max uint256 if needed."""
+        self._require_web3()
+        w3 = self._get_w3()
+        from eth_account import Account
+
+        account = Account.from_key(self._private_key)
+        usdc = w3.eth.contract(
+            address=w3.to_checksum_address(USDC_E_ADDRESS),
+            abi=ERC20_APPROVE_ABI,
+        )
+
+        current = usdc.functions.allowance(account.address, w3.to_checksum_address(spender)).call()
+        if current >= amount:
+            return None
+
+        max_uint256 = 2**256 - 1
+        tx = usdc.functions.approve(
+            w3.to_checksum_address(spender), max_uint256
+        ).build_transaction({"chainId": 137})
+        return self._sign_and_send_tx(tx)
+
+    def _ensure_ctf_approval(self, operator: str) -> dict[str, Any] | None:
+        """Check CTF isApprovedForAll, set approval if needed."""
+        self._require_web3()
+        w3 = self._get_w3()
+        from eth_account import Account
+
+        account = Account.from_key(self._private_key)
+        ctf = w3.eth.contract(
+            address=w3.to_checksum_address(CTF_ADDRESS),
+            abi=CTF_APPROVAL_ABI,
+        )
+
+        approved = ctf.functions.isApprovedForAll(
+            account.address, w3.to_checksum_address(operator)
+        ).call()
+        if approved:
+            return None
+
+        tx = ctf.functions.setApprovalForAll(
+            w3.to_checksum_address(operator), True
+        ).build_transaction({"chainId": 137})
+        return self._sign_and_send_tx(tx)
+
+    def split_position(
+        self,
+        condition_id: str,
+        amount_usdc: float,
+        neg_risk: bool = False,
+    ) -> dict[str, Any]:
+        """Split USDC.e into YES + NO outcome tokens."""
+        self._require_web3()
+        w3 = self._get_w3()
+        amount_base = int(amount_usdc * 1_000_000)
+
+        if neg_risk:
+            spender = NEG_RISK_ADAPTER_ADDRESS
+            self._ensure_usdc_approval(spender, amount_base)
+            contract = w3.eth.contract(
+                address=w3.to_checksum_address(NEG_RISK_ADAPTER_ADDRESS),
+                abi=NEG_RISK_ADAPTER_ABI,
+            )
+            tx = contract.functions.splitPosition(
+                self._to_condition_bytes(condition_id),
+                amount_base,
+            ).build_transaction({"chainId": 137})
+        else:
+            spender = CTF_ADDRESS
+            self._ensure_usdc_approval(spender, amount_base)
+            ctf = w3.eth.contract(
+                address=w3.to_checksum_address(CTF_ADDRESS),
+                abi=CTF_SPLIT_MERGE_ABI,
+            )
+            tx = ctf.functions.splitPosition(
+                w3.to_checksum_address(USDC_E_ADDRESS),
+                bytes.fromhex(ZERO_BYTES32[2:]),
+                self._to_condition_bytes(condition_id),
+                BINARY_PARTITION,
+                amount_base,
+            ).build_transaction({"chainId": 137})
+
+        result = self._sign_and_send_tx(tx)
+        result["amount_usdc"] = amount_usdc
+        result["neg_risk"] = neg_risk
+        return result
+
+    def merge_positions(
+        self,
+        condition_id: str,
+        amount_usdc: float,
+        neg_risk: bool = False,
+    ) -> dict[str, Any]:
+        """Merge YES + NO outcome tokens back into USDC.e."""
+        self._require_web3()
+        w3 = self._get_w3()
+        amount_base = int(amount_usdc * 1_000_000)
+
+        if neg_risk:
+            self._ensure_ctf_approval(NEG_RISK_ADAPTER_ADDRESS)
+            contract = w3.eth.contract(
+                address=w3.to_checksum_address(NEG_RISK_ADAPTER_ADDRESS),
+                abi=NEG_RISK_ADAPTER_ABI,
+            )
+            tx = contract.functions.mergePositions(
+                self._to_condition_bytes(condition_id),
+                amount_base,
+            ).build_transaction({"chainId": 137})
+        else:
+            ctf = w3.eth.contract(
+                address=w3.to_checksum_address(CTF_ADDRESS),
+                abi=CTF_SPLIT_MERGE_ABI,
+            )
+            tx = ctf.functions.mergePositions(
+                w3.to_checksum_address(USDC_E_ADDRESS),
+                bytes.fromhex(ZERO_BYTES32[2:]),
+                self._to_condition_bytes(condition_id),
+                BINARY_PARTITION,
+                amount_base,
+            ).build_transaction({"chainId": 137})
+
+        result = self._sign_and_send_tx(tx)
+        result["amount_usdc"] = amount_usdc
+        result["neg_risk"] = neg_risk
+        return result

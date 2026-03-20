@@ -1,316 +1,299 @@
 ---
 name: polymarket
-description: Official Polymarket skill for raw market, event, funding, compliance, and trading primitives. Use when the user wants direct Polymarket capabilities or when another strategy skill needs canonical Polymarket data and execution tools.
+description: Official Polymarket primitive skill for market discovery, quality assessment, pre-trade validation, orderbook/price data, funding/compliance, and live trading. Use when the user wants direct Polymarket capabilities or when another strategy skill needs canonical Polymarket data and execution.
 license: MIT
 metadata:
   author: gigabrain
-  version: "4.0"
+  version: "2.0"
 ---
 
 # Polymarket Official Skill
 
-This is the canonical Polymarket primitive skill for SuperAgents.
+Canonical Polymarket primitive layer for SuperAgents.
 
-Use it for:
-- raw Polymarket discovery and market metadata
-- exact identifiers and status fields
-- order book, price history, trade history, balances, positions, and orders
-- funding and bridge helpers
-- geoblock/readiness checks
-- live order execution
+Use this skill for:
+- Market discovery with quality scoring
+- Pre-trade safety validation
+- Orderbook, price history, market trades, balances, positions, and orders
+- Funding and bridge helpers
+- Geoblock and readiness checks
+- Live order execution
 
-Do not treat this skill itself as a strategy engine. Strategy-specific skills should compose this skill and make their own decisions on filtering, ranking, edge, and risk.
+Do not use this skill itself as a strategy engine. Other skills should compose it for scanning, edge ranking, thesis generation, and portfolio policy.
 
-Resolve `SKILL_DIR` as the directory containing this `SKILL.md`, then run scripts from absolute paths under that directory. Do not rely on the current working directory or any injected `CLAUDE_*` skill path variable.
+Resolve `SKILL_DIR` as the directory containing this `SKILL.md`, then run scripts from absolute paths under that directory.
 
 ```bash
 uv run "$SKILL_DIR/scripts/pm_client.py" <command> [args]
 ```
 
-All commands return JSON to stdout.
+Use `--help` on any command when you need exact flags:
 
-## Setup
-No manual setup needed. Scripts declare their own dependencies and run in isolated environments via `uv run`.
+```bash
+uv run "$SKILL_DIR/scripts/pm_client.py" assess --help
+```
 
 ## Environment
 
-- Read-only discovery and market-data commands work without wallet keys.
-- Trading commands require a Polygon EOA wallet.
-- Builder attribution is optional and only matters for leaderboard credit.
+- Read-only commands work without wallet keys.
+- Trading requires `EVM_PRIVATE_KEY` and `EVM_WALLET_ADDRESS`.
+- Builder attribution is optional.
+- Trading-ready funding is USDC.e on Polygon.
 
-| Variable | Description |
-|----------|-------------|
-| `EVM_PRIVATE_KEY` | Polygon EOA private key for signing CLOB orders |
-| `EVM_WALLET_ADDRESS` | Corresponding wallet address |
-| `POLY_BUILDER_API_KEY` | Optional builder API key for order attribution |
-| `POLY_BUILDER_SECRET` | Optional builder API secret |
-| `POLY_BUILDER_PASSPHRASE` | Optional builder API passphrase |
-| `POLY_BUILDER_SIGNER_URL` | Optional remote signer endpoint for builder attribution |
-| `POLY_BUILDER_SIGNER_TOKEN` | Optional bearer token for the remote signer |
+Wallet type configuration:
+- `POLY_SIGNATURE_TYPE` — `0` (EOA, default), `1` (Proxy/MagicLink), or `2` (Gnosis Safe). See `references/wallet-guide.md` for details.
+- `POLY_FUNDER_ADDRESS` — The address that funds trades. Falls back to `EVM_WALLET_ADDRESS` if unset. Required for Proxy and Safe wallets where the funder differs from the signer.
 
-This skill is EOA-based. It does not require a Safe wallet.
+Optional builder vars:
+- `POLY_BUILDER_API_KEY`
+- `POLY_BUILDER_SECRET`
+- `POLY_BUILDER_PASSPHRASE`
+- `POLY_BUILDER_SIGNER_URL`
+- `POLY_BUILDER_SIGNER_TOKEN`
 
-## Raw-First Contract
+## BEFORE Every Trade
 
-If another skill needs canonical Polymarket data, prefer the raw commands and raw modes first.
+These rules are mandatory. Violating them risks trading dead, illiquid, or dangerous markets.
 
-The raw surfaces are intended to preserve upstream fields with minimal opinionation:
-- `markets-raw`
-- `events-raw`
-- `public-search-raw`
-- `orderbook --raw`
-- `price-history --raw`
-- `positions --raw`
-- `my-orders --raw`
-- `trades`
-- `market-trades`
-- `fund-assets`
-- `fund-quote`
-- `fund-address`
-- `fund-status`
-- `geoblock`
+1. **ALWAYS** run `assess` or check the `quality` field from `search` before trading.
+2. **NEVER** trade a market with `is_tradable: false`.
+3. **NEVER** trade a market with liquidity below $5,000 without `--skip-liquidity-check` and explicit user approval.
+4. **NEVER** trade a market with spread > 10% without `--skip-spread-check` and explicit user approval.
+5. **ALWAYS** check `balance` before buying.
+6. For orders > $100: use limit orders (not market orders).
+7. For orders > $500: check orderbook depth first via `orderbook` or `assess`.
+8. **ALWAYS** use exact `--market-slug`, never free-text `--query` for trading commands (`buy`, `sell`).
+9. After every trade, verify with `positions` or `check-order`.
 
-The convenience helpers are still available, but they may rank, summarize, or filter:
-- `search`
-- `events`
-- `public-search`
-- `trending`
-- `odds`
-- `resolve`
-- `readiness`
+## Preserve These IDs
 
-## Stable Identifiers
-
-Strategy skills should preserve and pass through these identifiers whenever possible:
+Downstream strategy skills should preserve:
 - `event_id`
 - `event_slug`
 - `market_slug`
 - `condition_id`
 - `token_id`
 
-Also preserve core status and microstructure fields where present:
-- `active`
-- `closed`
-- `archived`
-- `acceptingOrders`
-- `ready`
+Important upstream fields to keep when present:
+- `active`, `closed`, `archived`
+- `acceptingOrders`, `ready`
 - `negRisk`
-- `bestBid`
-- `bestAsk`
-- `spread`
-- `liquidity`
-- `volume`
-- `openInterest`
-- `commentCount`
-- `endDate`
+- `liquidity`, `volume`
+- `spread`, `bestBid`, `bestAsk`
+- `openInterest`, `commentCount`
 - `resolutionSource`
 
-## Raw Discovery Commands
+## Command Families
 
-Use these when another skill needs direct Polymarket/Gamma payloads.
+### Quality Assessment (NEW)
+
+Use these before any trade decision.
+
+- `assess` -- Single-market quality report with orderbook snapshot
+- `validate-trade` -- Dry-run pre-trade validation without placing an order
+- `top-markets` -- Top N markets by composite quality score
+- `config` -- Show environment and configuration status
+
+Examples:
 
 ```bash
-# Raw market listing/search from Gamma
-uv run "$SKILL_DIR/scripts/pm_client.py" markets-raw --query "bitcoin" --limit 10
-uv run "$SKILL_DIR/scripts/pm_client.py" markets-raw --tag crypto --order volume24hr
+# Assess a specific market
+uv run "$SKILL_DIR/scripts/pm_client.py" assess --market-slug "will-bitcoin-hit-100k-in-2026"
 
-# Raw event listing/search from Gamma
-uv run "$SKILL_DIR/scripts/pm_client.py" events-raw --query "bitcoin" --limit 10
-uv run "$SKILL_DIR/scripts/pm_client.py" events-raw --tag crypto --active true --closed false
+# Dry-run validation before buying
+uv run "$SKILL_DIR/scripts/pm_client.py" validate-trade --market-slug "will-bitcoin-hit-100k-in-2026" --outcome Yes --amount-usd 50 --price 0.65
 
-# Raw public-search response from Polymarket
-uv run "$SKILL_DIR/scripts/pm_client.py" public-search-raw --query "bitcoin 100k" --limit 10
+# Top tradable markets
+uv run "$SKILL_DIR/scripts/pm_client.py" top-markets --limit 5
+
+# Top crypto markets
+uv run "$SKILL_DIR/scripts/pm_client.py" top-markets --limit 5 --tag crypto
 ```
 
-These are the preferred inputs for downstream strategy skills.
+### Raw Discovery
 
-## Convenience Discovery Commands
+Preferred for downstream strategy skills.
 
-Use these when the user wants a faster direct answer rather than raw payloads.
+- `markets-raw`
+- `events-raw`
+- `public-search-raw`
+
+Example:
 
 ```bash
-# Search markets with local normalization/ranking
-uv run "$SKILL_DIR/scripts/pm_client.py" search --query "bitcoin 100k" --limit 5
+uv run "$SKILL_DIR/scripts/pm_client.py" markets-raw --query "bitcoin" --limit 10
+```
 
-# Search events with trimmed nested markets
-uv run "$SKILL_DIR/scripts/pm_client.py" events --query "bitcoin 100k" --limit 5
+### Convenience Discovery
 
-# Public-search with live/open event shaping
-uv run "$SKILL_DIR/scripts/pm_client.py" public-search --query "bitcoin 100k" --limit 5 --market-limit 3
+Useful for direct user-facing exploration. Results include quality scores.
 
-# Trending helper views
-uv run "$SKILL_DIR/scripts/pm_client.py" trending --limit 10
-uv run "$SKILL_DIR/scripts/pm_client.py" trending --sort liquidity
-uv run "$SKILL_DIR/scripts/pm_client.py" trending --sort ending
+- `search` -- Quality-ranked market search
+- `events`
+- `public-search`
+- `trending`
+- `odds`
+- `resolve`
 
-# Quick odds summary and exact-market resolution
-uv run "$SKILL_DIR/scripts/pm_client.py" odds --query "Will BTC hit 100k"
+Example:
+
+```bash
+uv run "$SKILL_DIR/scripts/pm_client.py" search --query "bitcoin" --limit 10
 uv run "$SKILL_DIR/scripts/pm_client.py" resolve --query "Will BTC hit 100k" --outcome Yes
 ```
 
-## Market Data And Microstructure
+### Market Data
 
-Use exact `--market-slug` values after disambiguation whenever possible.
+- `orderbook` and `orderbook --raw`
+- `price-history` and `price-history --raw`
+- `market-trades`
+
+Example:
 
 ```bash
-# Structured orderbook summary
-uv run "$SKILL_DIR/scripts/pm_client.py" orderbook \
-  --market-slug "<exact-market-slug>" \
-  --outcome Yes \
-  --depth 10
-
-# Raw orderbook payload
-uv run "$SKILL_DIR/scripts/pm_client.py" orderbook \
-  --market-slug "<exact-market-slug>" \
-  --outcome Yes \
-  --raw
-
-# Structured price history
-uv run "$SKILL_DIR/scripts/pm_client.py" price-history \
-  --market-slug "<exact-market-slug>" \
-  --outcome Yes \
-  --interval 1w \
-  --fidelity 5
-
-# Raw price-history response
-uv run "$SKILL_DIR/scripts/pm_client.py" price-history \
-  --market-slug "<exact-market-slug>" \
-  --outcome Yes \
-  --interval 1w \
-  --raw
-
-# Market trade events
-uv run "$SKILL_DIR/scripts/pm_client.py" market-trades \
-  --market-slug "<exact-market-slug>" \
-  --outcome Yes \
-  --limit 20
+uv run "$SKILL_DIR/scripts/pm_client.py" orderbook --market-slug "<exact-market-slug>" --outcome Yes --raw
 ```
 
-## Funding And Compliance
+### Funding And Compliance
 
-When the user says "deposit to Polymarket", "fund Polymarket", or "top up the bot", use this section first.
+When the user says deposit, fund, or top up Polymarket, do this before trading.
 
-Trading requires USDC.e on Polygon in `EVM_WALLET_ADDRESS`.
+- `readiness`
+- `geoblock`
+- `balance`
+- `fund-assets`
+- `fund-quote`
+- `fund-address`
+- `fund-status`
+
+Example:
 
 ```bash
-# Check readiness before a live trade
 uv run "$SKILL_DIR/scripts/pm_client.py" readiness
-
-# Check current geoblock status
-uv run "$SKILL_DIR/scripts/pm_client.py" geoblock
-
-# View trading-ready balance
-uv run "$SKILL_DIR/scripts/pm_client.py" balance
-
-# Discover bridgeable assets
-uv run "$SKILL_DIR/scripts/pm_client.py" fund-assets --symbol USDC
-
-# Create a bridge quote into Polygon USDC.e
-uv run "$SKILL_DIR/scripts/pm_client.py" fund-quote \
-  --from-chain-id 8453 \
-  --from-token-address 0x833589fCD6EDb6E08f4c7C32D4f71b54bdA02913 \
-  --from-amount-base-unit 1000000
-
-# Create or fetch a bridge deposit address
 uv run "$SKILL_DIR/scripts/pm_client.py" fund-address
-
-# Track bridge settlement
-uv run "$SKILL_DIR/scripts/pm_client.py" fund-status --deposit-address <address>
 ```
 
-## Trading Commands
+### Withdrawal
 
-Trading requires `EVM_PRIVATE_KEY` and `EVM_WALLET_ADDRESS`.
+When the user wants to withdraw funds from Polymarket back to another chain.
 
-Always prefer exact `--market-slug` after `resolve` if the market is not already known.
+- `withdraw-quote` -- Get a bridge quote for withdrawing USDC.e from Polygon
+- `withdraw-address` -- Initiate a withdrawal and get the withdrawal address
+- `withdraw-status` -- Check withdrawal transaction status
+
+Example:
 
 ```bash
-# Limit buy
-uv run "$SKILL_DIR/scripts/pm_client.py" buy \
-  --market-slug "<exact-market-slug>" \
-  --outcome Yes \
-  --price 0.65 \
-  --amount-usd 50
+# Get a withdrawal quote to Ethereum mainnet USDC
+uv run "$SKILL_DIR/scripts/pm_client.py" withdraw-quote --to-chain-id 1 --to-token-address 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48 --from-amount-base-unit 1000000
 
-# Market buy
-uv run "$SKILL_DIR/scripts/pm_client.py" buy \
-  --market-slug "<exact-market-slug>" \
-  --outcome Yes \
-  --amount-usd 50 \
-  --market-order \
-  --market-tif FAK
+# Initiate withdrawal
+uv run "$SKILL_DIR/scripts/pm_client.py" withdraw-address
 
-# GTD buy
-uv run "$SKILL_DIR/scripts/pm_client.py" buy \
-  --market-slug "<exact-market-slug>" \
-  --outcome Yes \
-  --price 0.65 \
-  --amount-usd 50 \
-  --time-in-force GTD \
-  --expire-seconds 600
-
-# Limit sell
-uv run "$SKILL_DIR/scripts/pm_client.py" sell \
-  --market-slug "<exact-market-slug>" \
-  --outcome Yes \
-  --price 0.70 \
-  --shares 100
-
-# Market sell
-uv run "$SKILL_DIR/scripts/pm_client.py" sell \
-  --market-slug "<exact-market-slug>" \
-  --outcome Yes \
-  --shares 100 \
-  --market-order \
-  --market-tif FOK
+# Check status
+uv run "$SKILL_DIR/scripts/pm_client.py" withdraw-status --deposit-address <address-from-withdraw-address>
 ```
 
-## Portfolio And Orders
+### Token Operations
+
+CTF token lifecycle operations. Requires `EVM_PRIVATE_KEY` and a small amount of POL for gas (~$0.01 per tx).
+
+- `redeem` -- Redeem resolved positions back to USDC.e
+- `split` -- Split USDC.e into YES + NO outcome tokens
+- `merge` -- Merge YES + NO outcome tokens back into USDC.e
+
+Token lifecycle: USDC.e → `split` → YES + NO tokens → trade on CLOB → `merge` back or wait for resolution → `redeem`
+
+Example:
 
 ```bash
-# Current positions summary
-uv run "$SKILL_DIR/scripts/pm_client.py" positions
+# Redeem a resolved market
+uv run "$SKILL_DIR/scripts/pm_client.py" redeem --market-slug "will-bitcoin-hit-100k-in-2026"
 
-# Raw positions payload
-uv run "$SKILL_DIR/scripts/pm_client.py" positions --raw
+# Split $1 into YES + NO tokens
+uv run "$SKILL_DIR/scripts/pm_client.py" split --market-slug "will-bitcoin-hit-100k-in-2026" --amount-usdc 1
 
-# Recent trade history
-uv run "$SKILL_DIR/scripts/pm_client.py" trades --limit 20
-
-# Open orders summary
-uv run "$SKILL_DIR/scripts/pm_client.py" my-orders
-
-# Raw open-order payload
-uv run "$SKILL_DIR/scripts/pm_client.py" my-orders --raw
-
-# Cancel a single order
-uv run "$SKILL_DIR/scripts/pm_client.py" cancel-order --order-id abc123
-
-# Cancel all open orders
-uv run "$SKILL_DIR/scripts/pm_client.py" cancel-order --all
-
-# Check fill status
-uv run "$SKILL_DIR/scripts/pm_client.py" check-order --order-id abc123
+# Merge tokens back into USDC.e
+uv run "$SKILL_DIR/scripts/pm_client.py" merge --market-slug "will-bitcoin-hit-100k-in-2026" --amount-usdc 1
 ```
 
-## Builder Attribution
+### Trading And Orders
 
-Builder attribution is optional. If builder credentials are missing, trading still works but volume will not count toward leaderboard attribution.
+All buy/sell commands now include pre-trade validation. Orders are blocked if validation fails unless checks are explicitly bypassed.
+
+- `buy` -- With `--skip-liquidity-check`, `--skip-spread-check` override flags
+- `sell` -- With `--skip-liquidity-check`, `--skip-spread-check` override flags
+- `positions` and `positions --raw`
+- `trades`
+- `my-orders` and `my-orders --raw`
+- `cancel-order`
+- `check-order`
+
+Example:
 
 ```bash
-# Check whether builder auth is active
-uv run "$SKILL_DIR/scripts/pm_client.py" builder-status
+# Limit buy (recommended for > $100)
+uv run "$SKILL_DIR/scripts/pm_client.py" buy --market-slug "<exact-market-slug>" --outcome Yes --price 0.65 --amount-usd 50
 
-# Verify attributed fills
-uv run "$SKILL_DIR/scripts/pm_client.py" builder-trades --limit 20
+# Market buy (only for small orders on liquid markets)
+uv run "$SKILL_DIR/scripts/pm_client.py" buy --market-slug "<exact-market-slug>" --outcome Yes --amount-usd 10 --market-order
+
+# Force trade on low-liquidity market (requires explicit user approval)
+uv run "$SKILL_DIR/scripts/pm_client.py" buy --market-slug "<slug>" --outcome Yes --price 0.65 --amount-usd 50 --skip-liquidity-check
 ```
 
-## Usage Rules
+### Builder Attribution
+
+Optional only. Missing builder creds should not block normal research or trading.
+
+- `builder-status`
+- `builder-trades`
+
+## Quality Scoring
+
+Every market gets a quality assessment with:
+- `tradability_score` (0-100): Composite of liquidity, volume, spread, and status
+- `liquidity_usd`: Market liquidity in USD
+- `volume_24h_usd`: 24-hour trading volume
+- `spread_pct`: Bid-ask spread as percentage
+- `is_tradable`: Boolean - meets minimum safety thresholds
+- `warnings`: List of quality concerns
+
+Search results are ranked by composite score: `sqrt(relevance * quality)`. This means both relevance to the query AND market quality matter equally. A $0-liquidity market scores 0 regardless of query match.
+
+See `references/market-quality.md` for detailed scoring methodology.
+
+## Pre-Trade Validation
+
+Every `buy` and `sell` runs through a validation cascade:
+
+1. **Input validation** -- outcome non-empty, amount > 0, price in range
+2. **Market status** -- active, not closed, not archived, accepting orders, not expired (CANNOT be bypassed)
+3. **Outcome resolution** -- outcome exists in market tokens
+4. **Liquidity check** -- liquidity >= $5,000 (bypassable: `--skip-liquidity-check`)
+5. **Spread check** -- spread <= 10% for limit orders (bypassable: `--skip-spread-check`)
+6. **Book depth check** -- available USD >= 1.5x order size for market orders
+7. **Balance check** -- USDC balance >= order amount
+
+Status checks (step 2) can NEVER be bypassed. Liquidity and spread checks can be bypassed with explicit flags.
+
+## Recommended Workflow
+
+1. `search` or `top-markets` to find candidates
+2. `assess --market-slug <slug>` for quality report
+3. `validate-trade` to dry-run the trade
+4. `readiness` to check wallet and geo status
+5. `buy` or `sell` with exact `--market-slug`
+6. `check-order` or `positions` to verify
+7. After resolution: `positions` to find redeemable positions, then `redeem` to collect winnings
+
+## Rules
 
 1. Prefer raw commands when another skill needs canonical Polymarket fields.
 2. Prefer exact `market_slug` values for `orderbook`, `price-history`, `market-trades`, `buy`, and `sell`.
-3. Do not place trades from a fuzzy query if `resolve` returns multiple candidate markets.
+3. If `resolve` returns multiple candidates, do not trade until one exact market is selected.
 4. Treat funding as a separate workflow from trading.
-5. Run `readiness` before live execution when geography, funding, or builder attribution matters.
-6. If `geoblock` or `readiness` indicates a geographic block, do not proceed to trading.
-7. If a user wants thesis generation, edge ranking, or market selection logic, compose this skill from a separate strategy skill rather than encoding that logic here.
+5. If `readiness` or `geoblock` indicates a geographic block, do not trade.
+6. If the user wants thesis generation or catalyst analysis, use `polymarket-deep-research` first.
+7. Always check `quality.is_tradable` before executing trades.
+8. Never bypass liquidity or spread checks without explicit user approval.
