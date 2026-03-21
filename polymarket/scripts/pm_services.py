@@ -1297,6 +1297,59 @@ class PMClient:
                 continue
         return markets
 
+    async def get_market_by_slug(self, market_slug: str) -> Market | None:
+        """Resolve an exact market slug via Gamma API, with event fallback."""
+        normalized_slug = _normalize_text(market_slug)
+        if not normalized_slug:
+            return None
+
+        # First try direct market lookup
+        try:
+            data = await self._get(
+                f"{GAMMA_API_URL}/markets",
+                {"slug": market_slug, "limit": 20, "active": True, "closed": False},
+            )
+            items = data if isinstance(data, list) else data.get("data", [])
+            for item in items:
+                try:
+                    market = Market.model_validate(item)
+                    if market.closed or market.archived or market.yes_price is None:
+                        continue
+                    if (
+                        _normalize_text(market.slug) == normalized_slug
+                        or _normalize_text(market.market_slug) == normalized_slug
+                    ):
+                        return market
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+        # Then try event lookup and scan nested markets
+        try:
+            data = await self._get(
+                f"{GAMMA_API_URL}/events",
+                {"slug": market_slug, "limit": 10, "active": True, "closed": False},
+            )
+            events = data if isinstance(data, list) else data.get("data", [])
+            for event in events:
+                for item in event.get("markets") or []:
+                    try:
+                        market = Market.model_validate(item)
+                        if market.closed or market.archived or market.yes_price is None:
+                            continue
+                        if (
+                            _normalize_text(market.slug) == normalized_slug
+                            or _normalize_text(market.market_slug) == normalized_slug
+                        ):
+                            return market
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+
+        return None
+
     async def search_markets(self, query: str, limit: int = 20, sort_by: SortBy | None = "volume") -> list[Market]:
         normalized_query = _normalize_text(query)
         if not normalized_query:

@@ -159,27 +159,35 @@ async def _resolve_market(client, query: str | None, outcome: str | None, market
             "error": "Provide --query or --market-slug",
         }
 
+    selector = market_slug or query
+
+    # Exact slug lookup bypasses fuzzy search entirely.
+    if market_slug:
+        exact_market = await client.get_market_by_slug(market_slug)
+        if exact_market is None:
+            fallback_markets = await client.search_markets(search_query, limit=8)
+            return None, {
+                "success": False,
+                "error": f"No market matched slug '{market_slug}'",
+                "candidates": [_format_candidate(m) for m in fallback_markets[:5]],
+            }
+
+        if outcome and not exact_market.get_token_id(outcome):
+            available = exact_market.outcomes or [t.outcome for t in (exact_market.tokens or [])]
+            return None, {
+                "success": False,
+                "error": f"Outcome '{outcome}' not found in market '{market_slug}'",
+                "candidates": [{**_format_candidate(exact_market), "outcomes": available}],
+            }
+
+        return exact_market, None
+
     markets = await client.search_markets(search_query, limit=8)
     if not markets:
-        selector = market_slug or query
         return None, {
             "success": False,
             "error": f"No markets found for '{selector}'",
         }
-
-    if market_slug:
-        slug_matches = [
-            m for m in markets
-            if _normalize_selector(m.slug) == _normalize_selector(market_slug)
-            or _normalize_selector(m.market_slug) == _normalize_selector(market_slug)
-        ]
-        if not slug_matches:
-            return None, {
-                "success": False,
-                "error": f"No market matched slug '{market_slug}'",
-                "candidates": [_format_candidate(m) for m in markets[:5]],
-            }
-        markets = slug_matches
 
     if query:
         exact_matches = [
