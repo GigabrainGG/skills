@@ -40,9 +40,15 @@ uv run "$SKILL_DIR/scripts/pm_client.py" assess --help
 - Builder attribution is optional.
 - Trading-ready funding is USDC.e on Polygon.
 
-Wallet type configuration:
+Wallet type configuration (ask the user which type they use if unclear):
 - `POLY_SIGNATURE_TYPE` — `0` (EOA, default), `1` (Proxy/MagicLink), or `2` (Gnosis Safe). See `references/wallet-guide.md` for details.
+  - **EOA (0):** User created account with a browser wallet (MetaMask, Rabby, etc.) and deposited directly. Simplest setup.
+  - **Proxy (1):** User signed up via email/MagicLink and Polymarket created a proxy wallet. Requires `POLY_FUNDER_ADDRESS` set to the proxy contract address.
+  - **Gnosis Safe (2):** User connected a Gnosis Safe. Requires `POLY_FUNDER_ADDRESS` set to the Safe address.
 - `POLY_FUNDER_ADDRESS` — The address that funds trades. Falls back to `EVM_WALLET_ADDRESS` if unset. Required for Proxy and Safe wallets where the funder differs from the signer.
+
+Optional RPC:
+- `POLYGON_RPC_URL` — Override the default Polygon RPC endpoint. Defaults to `https://polygon.drpc.org`. Set to your own Alchemy/Infura endpoint for higher rate limits.
 
 Optional builder vars:
 - `POLY_BUILDER_API_KEY`
@@ -160,16 +166,21 @@ When the user says deposit, fund, or top up Polymarket, do this before trading.
 
 - `readiness`
 - `geoblock`
-- `balance`
+- `balance` -- Shows both on-chain wallet balance and CLOB trading balance
+- `approve-trading` -- Approve the exchange contract to spend wallet USDC.e (required before wallet funds appear as trading balance)
 - `fund-assets`
 - `fund-quote`
 - `fund-address`
 - `fund-status`
 
+**Wallet vs Trading Balance:** USDC.e sent directly to the Polygon wallet address is not immediately available for trading. The `balance` command shows both `wallet_balance` (on-chain) and `trading_balance` (CLOB-ready). If wallet has funds but trading shows 0, run `approve-trading` to authorize the exchange contract.
+
 Example:
 
 ```bash
 uv run "$SKILL_DIR/scripts/pm_client.py" readiness
+uv run "$SKILL_DIR/scripts/pm_client.py" balance
+uv run "$SKILL_DIR/scripts/pm_client.py" approve-trading
 uv run "$SKILL_DIR/scripts/pm_client.py" fund-address
 ```
 
@@ -219,15 +230,17 @@ uv run "$SKILL_DIR/scripts/pm_client.py" merge --market-slug "will-bitcoin-hit-1
 
 ### Trading And Orders
 
-All buy/sell commands now include pre-trade validation. Orders are blocked if validation fails unless checks are explicitly bypassed.
+All buy/sell commands include pre-trade validation. Orders are blocked if validation fails unless checks are explicitly bypassed.
 
-- `buy` -- With `--skip-liquidity-check`, `--skip-spread-check` override flags
-- `sell` -- With `--skip-liquidity-check`, `--skip-spread-check` override flags
+- `buy` -- `--amount-usd` (required), `--price` (for limit), `--market-order` (for FOK)
+- `sell` -- `--shares` or `--amount-usd` (one required), `--price` (for limit), `--market-order` (for FOK)
 - `positions` and `positions --raw`
 - `trades`
 - `my-orders` and `my-orders --raw`
 - `cancel-order`
 - `check-order`
+
+Bypass flags: `--skip-liquidity-check`, `--skip-spread-check`
 
 Example:
 
@@ -237,6 +250,12 @@ uv run "$SKILL_DIR/scripts/pm_client.py" buy --market-slug "<exact-market-slug>"
 
 # Market buy (only for small orders on liquid markets)
 uv run "$SKILL_DIR/scripts/pm_client.py" buy --market-slug "<exact-market-slug>" --outcome Yes --amount-usd 10 --market-order
+
+# Sell by share count
+uv run "$SKILL_DIR/scripts/pm_client.py" sell --market-slug "<slug>" --outcome Yes --price 0.65 --shares 100
+
+# Sell by dollar amount (computes shares from price)
+uv run "$SKILL_DIR/scripts/pm_client.py" sell --market-slug "<slug>" --outcome Yes --price 0.65 --amount-usd 50
 
 # Force trade on low-liquidity market (requires explicit user approval)
 uv run "$SKILL_DIR/scripts/pm_client.py" buy --market-slug "<slug>" --outcome Yes --price 0.65 --amount-usd 50 --skip-liquidity-check
@@ -287,6 +306,33 @@ Status checks (step 2) can NEVER be bypassed. Liquidity and spread checks can be
 6. `check-order` or `positions` to verify
 7. After resolution: `positions` to find redeemable positions, then `redeem` to collect winnings
 
+## Things To Know
+
+- **Resolution is not instant.** A market's end date passing does not mean it is resolved. Resolution can take hours or days after the event concludes — Polymarket waits for oracle confirmation. If a user asks "why can't I redeem?" after a market ended, explain the delay and suggest checking back later. Do not treat unresolved markets as broken. The `redeem` command will warn if a market appears unresolved and explain if the transaction reverts.
+- **Wallet balance vs trading balance.** USDC.e sitting in the Polygon wallet is not automatically available for CLOB trading. The exchange contract must be approved first. If `balance` shows `wallet_balance > 0` but `trading_balance = 0`, tell the user to run `approve-trading`. This is the most common reason new users see a zero balance after funding. The `buy` command also hints about this if a purchase fails due to insufficient trading balance.
+- **Wallet type matters.** If the user's `POLY_SIGNATURE_TYPE` is wrong, orders will silently fail or produce cryptic errors. When a user reports unexpected trading failures, run `config` to check — it will warn about misconfigurations like missing `POLY_FUNDER_ADDRESS` for proxy wallets. `readiness` also validates this. See `references/wallet-guide.md`.
+- **Proxy/MagicLink limitations.** On-chain operations (`redeem`, `split`, `merge`) execute from the signer EOA but funds/positions live in the proxy contract. These operations may not work correctly for Proxy (type 1) and Gnosis Safe (type 2) wallets. CLOB trading (buy/sell) works correctly for all wallet types. If a proxy user needs to redeem, they should use the Polymarket web UI.
+- **Gas fees (POL).** On-chain operations (`redeem`, `split`, `merge`, `approve-trading`) require a small amount of POL (Polygon's native token) for gas — typically < $0.01 per tx. The `balance` and `readiness` commands show the `pol_balance` and warn if it's too low. If gas-related errors appear, the user needs to send a tiny amount of POL to their signer wallet address.
+- **CLOB initialization failures.** If `EVM_PRIVATE_KEY` and `EVM_WALLET_ADDRESS` are set but trading commands say "not configured," the CLOB client failed to initialize. Run `config` to see the specific error. Common causes: malformed private key, nonce issues during API credential derivation, or network problems.
+- **Follow next_step hints.** Many commands (`fund-address`, `fund-status`, `approve-trading`, `readiness`) return a `next_step` field telling you what to do next. Always surface these to the user.
+
+## Funding Workflow
+
+The complete sequence to go from zero to trading-ready:
+
+1. `readiness` — Check geography, wallet config, and current balances
+2. `fund-assets` — Find supported tokens/chains for bridging
+3. `fund-quote` — Get a bridge quote with amounts
+4. `fund-address` — Get a deposit address (output includes next_step instructions)
+5. User sends funds externally to the deposit address
+6. `fund-status --deposit-address <addr>` — Wait for bridge completion
+7. `balance` — Verify wallet_balance shows the funds
+8. `approve-trading` — Authorize the exchange contract (one-time per wallet)
+9. `balance` — Verify trading_balance is now available
+10. `readiness` — Final check before trading
+
+Each command returns `next_step` guidance so the agent can walk the user through seamlessly.
+
 ## Rules
 
 1. Prefer raw commands when another skill needs canonical Polymarket fields.
@@ -297,3 +343,22 @@ Status checks (step 2) can NEVER be bypassed. Liquidity and spread checks can be
 6. If the user wants thesis generation or catalyst analysis, use `polymarket-deep-research` first.
 7. Always check `quality.is_tradable` before executing trades.
 8. Never bypass liquidity or spread checks without explicit user approval.
+9. When `config` or `readiness` shows warnings, surface them to the user before proceeding.
+10. For Proxy/MagicLink (type 1) or Gnosis Safe (type 2) wallets, warn that on-chain operations (redeem/split/merge) may not work — recommend the Polymarket web UI for those.
+
+## Error Codes
+
+Error responses include a machine-readable `error_code` field for programmatic handling:
+
+- `TRADING_NOT_CONFIGURED` — Missing EVM_PRIVATE_KEY or EVM_WALLET_ADDRESS
+- `INVALID_INPUT` — Bad arguments (price out of range, missing required fields)
+- `VALIDATION_FAILED` — Pre-trade validation cascade blocked the order
+- `PRICE_REQUIRED` — Cannot compute shares without a price
+- `ORDER_REJECTED` — Exchange rejected the order
+- `INSUFFICIENT_GAS` — Not enough POL for gas fees
+- `ALLOWANCE_ERROR` — Exchange contract not approved to spend USDC.e
+- `RATE_LIMITED` — Too many API requests
+- `TIMEOUT` — Request timed out
+- `UNKNOWN_ERROR` — Unclassified error
+
+See `references/error-codes.md` for detailed resolution steps.

@@ -308,7 +308,7 @@ async def cmd_resolve(args):
         return
 
     payload = dict(error or {})
-    payload.setdefault("success", True)
+    payload["success"] = False
     payload["resolved"] = False
     _out(payload)
 
@@ -512,12 +512,21 @@ async def cmd_market_trades(args):
     })
 
 
-async def cmd_buy(args):
+def _validation_summary(validation):
+    return {
+        "checks_passed": sum(1 for c in validation.checks if c.passed),
+        "checks_warned": len(validation.warnings),
+    }
+
+
+async def _execute_trade(args, side: str):
+    """Shared buy/sell handler. Side is 'buy' or 'sell'."""
     from pm_services import validate_pre_trade
 
+    is_buy = side == "buy"
     client = _get_client()
     if not client.has_trading:
-        _out({"success": False, "error": "Trading not configured. Set EVM_PRIVATE_KEY and EVM_WALLET_ADDRESS."})
+        _out({"success": False, "error": "Trading not configured. Set EVM_PRIVATE_KEY and EVM_WALLET_ADDRESS.", "error_code": "TRADING_NOT_CONFIGURED"})
         return
 
     market, error = await _resolve_market(
@@ -530,210 +539,190 @@ async def cmd_buy(args):
         _out(error)
         return
 
-    # Limit buy requires price — check before validation so error is clear
-    if not args.market_order:
-        if not args.price:
-            _out({"success": False, "error": "Limit orders require --price"})
+    # Resolve shares for sell (support --amount-usd as alternative to --shares)
+    shares = None
+    if not is_buy:
+        if hasattr(args, "amount_usd") and args.amount_usd is not None:
+            if not args.price:
+                # Need a price to convert amount_usd to shares — use midpoint
+                token_id = market.get_token_id(args.outcome)
+                mid = client.get_midpoint(token_id) if token_id else None
+                if not mid:
+                    _out({"success": False, "error": "Cannot determine current price to convert --amount-usd to shares. Provide --price or use --shares directly.", "error_code": "PRICE_REQUIRED"})
+                    return
+                shares = args.amount_usd / mid
+            else:
+                shares = args.amount_usd / args.price
+        elif hasattr(args, "shares") and args.shares is not None:
+            shares = args.shares
+        else:
+            _out({"success": False, "error": "Sell requires --shares or --amount-usd", "error_code": "INVALID_INPUT"})
             return
-        if not (0.01 <= args.price <= 0.99):
-            _out({"success": False, "error": "Price must be between 0.01 and 0.99"})
+
+    # Limit order input checks
+    if not args.market_order:
+        if is_buy and not args.price:
+            _out({"success": False, "error": "Limit orders require --price", "error_code": "INVALID_INPUT"})
+            return
+        if not is_buy and not args.price:
+            if not (hasattr(args, "amount_usd") and args.amount_usd is not None):
+                _out({"success": False, "error": "Limit sells require --price", "error_code": "INVALID_INPUT"})
+                return
+        if args.price and not (0.01 <= args.price <= 0.99):
+            _out({"success": False, "error": "Price must be between 0.01 and 0.99", "error_code": "INVALID_INPUT"})
             return
         if args.time_in_force == "GTD" and not args.expire_seconds:
-            _out({"success": False, "error": "GTD orders require --expire-seconds"})
+            _out({"success": False, "error": "GTD orders require --expire-seconds", "error_code": "INVALID_INPUT"})
             return
 
     # Pre-trade validation
     usdc_balance = None
     book_depth = None
     token_id = market.get_token_id(args.outcome)
-    try:
-        usdc_balance = client.get_usdc_balance()
-    except Exception:
-        pass
+
+    if is_buy:
+        try:
+            usdc_balance = client.get_usdc_balance()
+        except Exception:
+            pass
+        amount_usd = args.amount_usd
+    else:
+        amount_usd = shares * (args.price or 0.50)
 
     if args.market_order and token_id:
         try:
-            book_depth = client.get_book_depth_usd(token_id, side="asks")
+            book_depth = client.get_book_depth_usd(token_id, side="asks" if is_buy else "bids")
         except Exception:
             pass
 
     validation = validate_pre_trade(
         market=market,
         outcome=args.outcome,
-        amount_usd=args.amount_usd,
+        amount_usd=amount_usd if amount_usd > 0 else 1.0,
         price=args.price,
         is_market_order=args.market_order,
         skip_liquidity_check=args.skip_liquidity_check,
         skip_spread_check=args.skip_spread_check,
-        usdc_balance=usdc_balance,
+        usdc_balance=usdc_balance if is_buy else None,
         book_depth_usd=book_depth,
     )
 
     if not validation.can_trade:
-        _out({
+        result = {
             "success": False,
             "error": "Pre-trade validation failed",
+            "error_code": "VALIDATION_FAILED",
             "validation": {
                 "checks": [c.model_dump() for c in validation.checks],
                 "warnings": validation.warnings,
             },
-        })
+        }
+        if is_buy:
+            balance_failed = any(c.name == "balance" and not c.passed for c in validation.checks)
+            if balance_failed:
+                try:
+                    wallet_bal = client.get_wallet_usdc_balance()
+                    if wallet_bal > 0:
+                        result["hint"] = f"Your wallet has {wallet_bal:.2f} USDC.e on-chain but trading balance is {usdc_balance or 0:.2f}. Run 'approve-trading' to make wallet funds available for trading."
+                except Exception:
+                    pass
+        _out(result)
         return
 
+    # Execute the order
     if args.market_order:
-        order_id = client.market_buy(
-            token_id=token_id,
-            amount_usd=args.amount_usd,
-            neg_risk=market.neg_risk,
-            order_type=args.market_tif,
-        )
-        _out({
-            "success": True, "action": "market_buy", "market": market.question,
-            "outcome": args.outcome, "amount_usd": args.amount_usd, "order_id": order_id,
-            "time_in_force": args.market_tif,
-            "builder": client.get_builder_status(),
-            "validation": {
-                "checks_passed": sum(1 for c in validation.checks if c.passed),
-                "checks_warned": len(validation.warnings),
-            },
-        })
+        if is_buy:
+            order_id = client.market_buy(
+                token_id=token_id, amount_usd=args.amount_usd,
+                neg_risk=market.neg_risk, order_type=args.market_tif,
+            )
+            _out({
+                "success": True, "action": "market_buy", "market": market.question,
+                "outcome": args.outcome, "amount_usd": args.amount_usd, "order_id": order_id,
+                "time_in_force": args.market_tif,
+                "builder": client.get_builder_status(),
+                "validation": _validation_summary(validation),
+            })
+        else:
+            order_id = client.market_sell(
+                token_id=token_id, shares=shares,
+                neg_risk=market.neg_risk, order_type=args.market_tif,
+            )
+            _out({
+                "success": True, "action": "market_sell", "market": market.question,
+                "outcome": args.outcome, "shares": round(shares, 2), "order_id": order_id,
+                "time_in_force": args.market_tif,
+                "builder": client.get_builder_status(),
+                "validation": _validation_summary(validation),
+            })
     else:
-        shares = args.amount_usd / args.price
-        order_id = client.buy(
-            token_id=token_id,
-            price=args.price,
-            size=shares,
-            neg_risk=market.neg_risk,
-            order_type=args.time_in_force,
-            expire_seconds=args.expire_seconds,
-        )
-        _out({
-            "success": True, "action": "limit_buy", "market": market.question,
-            "outcome": args.outcome, "price": args.price,
-            "shares": round(shares, 2), "cost_usd": args.amount_usd, "order_id": order_id,
-            "time_in_force": args.time_in_force,
-            "builder": client.get_builder_status(),
-            "validation": {
-                "checks_passed": sum(1 for c in validation.checks if c.passed),
-                "checks_warned": len(validation.warnings),
-            },
-        })
+        if is_buy:
+            buy_shares = args.amount_usd / args.price
+            order_id = client.buy(
+                token_id=token_id, price=args.price, size=buy_shares,
+                neg_risk=market.neg_risk, order_type=args.time_in_force,
+                expire_seconds=args.expire_seconds,
+            )
+            _out({
+                "success": True, "action": "limit_buy", "market": market.question,
+                "outcome": args.outcome, "price": args.price,
+                "shares": round(buy_shares, 2), "cost_usd": args.amount_usd, "order_id": order_id,
+                "time_in_force": args.time_in_force,
+                "builder": client.get_builder_status(),
+                "validation": _validation_summary(validation),
+            })
+        else:
+            order_id = client.sell(
+                token_id=token_id, price=args.price, size=shares,
+                neg_risk=market.neg_risk, order_type=args.time_in_force,
+                expire_seconds=args.expire_seconds,
+            )
+            _out({
+                "success": True, "action": "limit_sell", "market": market.question,
+                "outcome": args.outcome, "price": args.price,
+                "shares": round(shares, 2), "proceeds_usd": round(shares * args.price, 2), "order_id": order_id,
+                "time_in_force": args.time_in_force,
+                "builder": client.get_builder_status(),
+                "validation": _validation_summary(validation),
+            })
+
+
+async def cmd_buy(args):
+    await _execute_trade(args, side="buy")
 
 
 async def cmd_sell(args):
-    from pm_services import validate_pre_trade
-
-    client = _get_client()
-    if not client.has_trading:
-        _out({"success": False, "error": "Trading not configured. Set EVM_PRIVATE_KEY and EVM_WALLET_ADDRESS."})
-        return
-
-    market, error = await _resolve_market(
-        client,
-        query=args.query,
-        outcome=args.outcome,
-        market_slug=args.market_slug,
-    )
-    if error:
-        _out(error)
-        return
-
-    # Limit sell requires price — check before validation so error is clear
-    if not args.market_order:
-        if not args.price or not (0.01 <= args.price <= 0.99):
-            _out({"success": False, "error": "Limit sells require --price between 0.01 and 0.99"})
-            return
-        if args.time_in_force == "GTD" and not args.expire_seconds:
-            _out({"success": False, "error": "GTD orders require --expire-seconds"})
-            return
-
-    # Pre-trade validation (amount_usd estimated from shares * price for sells)
-    estimated_usd = args.shares * (args.price or 0.50)
-    book_depth = None
-    token_id = market.get_token_id(args.outcome)
-
-    if args.market_order and token_id:
-        try:
-            book_depth = client.get_book_depth_usd(token_id, side="bids")
-        except Exception:
-            pass
-
-    validation = validate_pre_trade(
-        market=market,
-        outcome=args.outcome,
-        amount_usd=estimated_usd if estimated_usd > 0 else 1.0,
-        price=args.price,
-        is_market_order=args.market_order,
-        skip_liquidity_check=args.skip_liquidity_check,
-        skip_spread_check=args.skip_spread_check,
-        usdc_balance=None,  # Sells don't need balance
-        book_depth_usd=book_depth,
-    )
-
-    if not validation.can_trade:
-        _out({
-            "success": False,
-            "error": "Pre-trade validation failed",
-            "validation": {
-                "checks": [c.model_dump() for c in validation.checks],
-                "warnings": validation.warnings,
-            },
-        })
-        return
-
-    if args.market_order:
-        order_id = client.market_sell(
-            token_id=token_id,
-            shares=args.shares,
-            neg_risk=market.neg_risk,
-            order_type=args.market_tif,
-        )
-        _out({
-            "success": True, "action": "market_sell", "market": market.question,
-            "outcome": args.outcome, "shares": args.shares, "order_id": order_id,
-            "time_in_force": args.market_tif,
-            "builder": client.get_builder_status(),
-            "validation": {
-                "checks_passed": sum(1 for c in validation.checks if c.passed),
-                "checks_warned": len(validation.warnings),
-            },
-        })
-        return
-
-    order_id = client.sell(
-        token_id=token_id,
-        price=args.price,
-        size=args.shares,
-        neg_risk=market.neg_risk,
-        order_type=args.time_in_force,
-        expire_seconds=args.expire_seconds,
-    )
-    _out({
-        "success": True, "action": "limit_sell", "market": market.question,
-        "outcome": args.outcome, "price": args.price,
-        "shares": args.shares, "proceeds_usd": round(args.shares * args.price, 2), "order_id": order_id,
-        "time_in_force": args.time_in_force,
-        "builder": client.get_builder_status(),
-        "validation": {
-            "checks_passed": sum(1 for c in validation.checks if c.passed),
-            "checks_warned": len(validation.warnings),
-        },
-    })
+    await _execute_trade(args, side="sell")
 
 
 async def cmd_balance(args):
     client = _get_client()
     if not client.has_trading:
-        _out({"success": False, "error": "Trading not configured. Set EVM_PRIVATE_KEY and EVM_WALLET_ADDRESS."})
+        _out({"success": False, "error": "Trading not configured. Set EVM_PRIVATE_KEY and EVM_WALLET_ADDRESS.", "error_code": "TRADING_NOT_CONFIGURED"})
         return
-    balance = client.get_usdc_balance()
-    _out({"success": True, "usdc_balance": balance})
+    trading_balance = client.get_usdc_balance()
+    wallet_balance = client.get_wallet_usdc_balance()
+    pol_balance = client.get_pol_balance()
+    result = {
+        "success": True,
+        "wallet_balance": wallet_balance,
+        "trading_balance": trading_balance,
+        "pol_balance": round(pol_balance, 6),
+    }
+    hints = []
+    if wallet_balance > 0 and trading_balance == 0:
+        hints.append("Wallet has USDC.e but trading balance is 0. Run 'approve-trading' to allow the exchange contract to access your funds.")
+    if pol_balance < 0.001:
+        hints.append("Very low POL balance. On-chain operations (approve-trading, redeem, split, merge) require POL for gas. Send a small amount of POL to your wallet.")
+    if hints:
+        result["hints"] = hints
+    _out(result)
 
 
 async def cmd_positions(args):
     client = _get_client()
     if not client.has_trading:
-        _out({"success": False, "error": "Trading not configured. Set EVM_PRIVATE_KEY and EVM_WALLET_ADDRESS."})
+        _out({"success": False, "error": "Trading not configured. Set EVM_PRIVATE_KEY and EVM_WALLET_ADDRESS.", "error_code": "TRADING_NOT_CONFIGURED"})
         return
     positions = await client.get_positions()
     if args.raw:
@@ -779,7 +768,7 @@ async def cmd_positions(args):
 async def cmd_trades(args):
     client = _get_client()
     if not client.has_trading:
-        _out({"success": False, "error": "Trading not configured. Set EVM_PRIVATE_KEY and EVM_WALLET_ADDRESS."})
+        _out({"success": False, "error": "Trading not configured. Set EVM_PRIVATE_KEY and EVM_WALLET_ADDRESS.", "error_code": "TRADING_NOT_CONFIGURED"})
         return
     trades = await client.get_trades(limit=args.limit)
     _out({"success": True, "trades": trades})
@@ -788,7 +777,7 @@ async def cmd_trades(args):
 async def cmd_my_orders(args):
     client = _get_client()
     if not client.has_trading:
-        _out({"success": False, "error": "Trading not configured. Set EVM_PRIVATE_KEY and EVM_WALLET_ADDRESS."})
+        _out({"success": False, "error": "Trading not configured. Set EVM_PRIVATE_KEY and EVM_WALLET_ADDRESS.", "error_code": "TRADING_NOT_CONFIGURED"})
         return
     orders = client.get_open_orders_raw() if args.raw else client.get_open_orders()
     _out({"success": True, "orders": orders})
@@ -797,7 +786,7 @@ async def cmd_my_orders(args):
 async def cmd_cancel_order(args):
     client = _get_client()
     if not client.has_trading:
-        _out({"success": False, "error": "Trading not configured. Set EVM_PRIVATE_KEY and EVM_WALLET_ADDRESS."})
+        _out({"success": False, "error": "Trading not configured. Set EVM_PRIVATE_KEY and EVM_WALLET_ADDRESS.", "error_code": "TRADING_NOT_CONFIGURED"})
         return
     if args.all:
         count = client.cancel_all()
@@ -813,7 +802,7 @@ async def cmd_cancel_order(args):
 async def cmd_check_order(args):
     client = _get_client()
     if not client.has_trading:
-        _out({"success": False, "error": "Trading not configured. Set EVM_PRIVATE_KEY and EVM_WALLET_ADDRESS."})
+        _out({"success": False, "error": "Trading not configured. Set EVM_PRIVATE_KEY and EVM_WALLET_ADDRESS.", "error_code": "TRADING_NOT_CONFIGURED"})
         return
     info = client.is_filled(args.order_id)
     info["success"] = True
@@ -873,13 +862,29 @@ async def cmd_fund_address(args):
         return
 
     deposit_address = await client.get_bridge_deposit_address(address)
-    _out({"success": True, "recipient_address": address, "deposit_address": deposit_address})
+    _out({
+        "success": True,
+        "recipient_address": address,
+        "deposit_address": deposit_address,
+        "next_step": "Send funds to this deposit address. Then check arrival with: fund-status --deposit-address <addr>. After funds arrive on Polygon, run 'approve-trading' to make them available for trading.",
+    })
 
 
 async def cmd_fund_status(args):
     client = _get_client()
     transactions = await client.get_bridge_status(args.deposit_address)
-    _out({"success": True, "deposit_address": args.deposit_address, "transactions": transactions})
+    has_completed = any(
+        t.get("status", "").lower() in ("completed", "complete", "success")
+        for t in (transactions if isinstance(transactions, list) else [])
+    )
+    result = {"success": True, "deposit_address": args.deposit_address, "transactions": transactions}
+    if has_completed:
+        result["next_step"] = "Funds have arrived. Run 'balance' to check, then 'approve-trading' if trading balance is still 0."
+    elif transactions:
+        result["next_step"] = "Bridge transaction in progress. Check again in a few minutes."
+    else:
+        result["next_step"] = "No transactions found for this deposit address. Funds may not have been sent yet."
+    _out(result)
 
 
 async def cmd_withdraw_quote(args):
@@ -931,28 +936,87 @@ async def cmd_readiness(args):
     client = _get_client()
     geoblock = await client.get_geoblock(ip=args.ip)
     builder = client.get_builder_status()
-    balance = client.get_usdc_balance() if client.has_trading else None
+    trading_balance = client.get_usdc_balance() if client.has_trading else None
+    wallet_balance = client.get_wallet_usdc_balance() if client.has_trading else None
+    pol_balance = client.get_pol_balance() if client.has_trading else None
+
+    warnings = []
+
+    # Signature type validation
+    sig_type = int(os.environ.get("POLY_SIGNATURE_TYPE", "0"))
+    if sig_type in (1, 2) and not os.environ.get("POLY_FUNDER_ADDRESS"):
+        sig_label = {1: "Proxy/MagicLink", 2: "Gnosis Safe"}.get(sig_type, str(sig_type))
+        warnings.append(f"POLY_SIGNATURE_TYPE is {sig_type} ({sig_label}) but POLY_FUNDER_ADDRESS is not set. This will cause order failures. Set it to your proxy/safe contract address.")
+
+    # CLOB init failure
+    if os.environ.get("EVM_PRIVATE_KEY") and os.environ.get("EVM_WALLET_ADDRESS") and not client.has_trading:
+        init_err = client._clob_init_error
+        msg = "EVM_PRIVATE_KEY and EVM_WALLET_ADDRESS are set but CLOB client failed to initialize."
+        if init_err:
+            msg += f" Reason: {init_err}"
+        warnings.append(msg)
+
+    # POL gas warning
+    if pol_balance is not None and pol_balance < 0.001:
+        warnings.append("Very low POL balance. On-chain operations (approve-trading, redeem, split, merge) require POL for gas.")
 
     if geoblock.get("blocked"):
         next_action = "Trading blocked in this geography. Stop before placing orders."
     elif not client.has_trading:
-        next_action = "Configure EVM_PRIVATE_KEY and EVM_WALLET_ADDRESS to enable trading."
-    elif balance is not None and balance <= 0:
-        next_action = "Get a bridge quote or deposit address, fund the wallet, then re-run readiness."
+        if warnings:
+            next_action = warnings[0]
+        else:
+            next_action = "Configure EVM_PRIVATE_KEY and EVM_WALLET_ADDRESS to enable trading."
+    elif trading_balance is not None and trading_balance <= 0:
+        if wallet_balance and wallet_balance > 0:
+            next_action = "Wallet has USDC.e but trading balance is 0. Run 'approve-trading' to allow the exchange contract to access your funds."
+        else:
+            next_action = "Get a bridge quote or deposit address, fund the wallet, then re-run readiness."
     elif not builder.get("can_builder_auth"):
         next_action = "Trading is possible, but builder attribution is disabled. Configure builder credentials for leaderboard credit."
     else:
         next_action = "Ready for one-shot research and trading."
 
-    _out({
+    result = {
         "success": True,
         "wallet_address": os.environ.get("EVM_WALLET_ADDRESS"),
+        "funder_address": os.environ.get("POLY_FUNDER_ADDRESS", os.environ.get("EVM_WALLET_ADDRESS")),
+        "signature_type": sig_type,
         "trading_configured": client.has_trading,
-        "usdc_balance": balance,
+        "wallet_balance": wallet_balance,
+        "trading_balance": trading_balance,
+        "pol_balance": round(pol_balance, 6) if pol_balance is not None else None,
         "builder": builder,
         "geoblock": geoblock,
         "next_action": next_action,
-    })
+    }
+    if warnings:
+        result["warnings"] = warnings
+    _out(result)
+
+
+async def cmd_approve_trading(args):
+    client = _get_client()
+    if not client.has_trading:
+        _out({"success": False, "error": "Trading not configured. Set EVM_PRIVATE_KEY and EVM_WALLET_ADDRESS.", "error_code": "TRADING_NOT_CONFIGURED"})
+        return
+    try:
+        client.approve_trading()
+        trading_balance = client.get_usdc_balance()
+        wallet_balance = client.get_wallet_usdc_balance()
+        _out({
+            "success": True,
+            "message": "Exchange contract approved to spend USDC.e.",
+            "wallet_balance": wallet_balance,
+            "trading_balance": trading_balance,
+            "next_step": "You can now place trades. Run 'readiness' for a full status check or 'buy' to start trading.",
+        })
+    except Exception as e:
+        err_str = str(e).lower()
+        if "insufficient funds" in err_str or "gas" in err_str:
+            _out({"success": False, "error": "Approve failed: insufficient POL for gas. Send a small amount of POL (Polygon's native token) to your wallet for transaction fees."})
+        else:
+            _out({"success": False, "error": f"Approve failed: {e}"})
 
 
 # ---------------------------------------------------------------------------
@@ -1092,8 +1156,10 @@ async def cmd_split(args):
             return
 
     result = client.split_position(condition_id, args.amount_usdc, neg_risk=neg_risk)
-    result["success"] = True
+    result["success"] = result.get("status") != "failed"
     result["condition_id"] = condition_id
+    if not result["success"]:
+        result["error"] = "Transaction reverted on-chain. Check that you have sufficient USDC.e and POL for gas."
     _out(result)
 
 
@@ -1120,8 +1186,10 @@ async def cmd_merge(args):
             return
 
     result = client.merge_positions(condition_id, args.amount_usdc, neg_risk=neg_risk)
-    result["success"] = True
+    result["success"] = result.get("status") != "failed"
     result["condition_id"] = condition_id
+    if not result["success"]:
+        result["error"] = "Transaction reverted on-chain. Check that you have sufficient outcome tokens and POL for gas."
     _out(result)
 
 
@@ -1129,6 +1197,7 @@ async def cmd_redeem(args):
     """Redeem resolved CTF positions back to USDC.e."""
     client = _get_client()
     condition_id = args.condition_id
+    market = None
 
     if not condition_id:
         market, error = await _resolve_market(
@@ -1145,9 +1214,22 @@ async def cmd_redeem(args):
             _out({"success": False, "error": "Could not determine condition_id for this market"})
             return
 
+    # Warn if market is not yet resolved (resolution can lag hours/days after end date)
+    resolution_warning = None
+    if market and not getattr(market, "resolved", False):
+        end_date = getattr(market, "end_date_iso", None) or getattr(market, "expiration_date", None)
+        resolution_warning = "This market does not appear to be resolved yet. Resolution can take hours or days after the event concludes while Polymarket waits for oracle confirmation."
+        if end_date:
+            resolution_warning += f" End date: {end_date}."
+        resolution_warning += " Proceeding anyway, but the transaction may revert (wasting gas)."
+
     result = client.redeem_positions(condition_id)
-    result["success"] = True
+    result["success"] = result.get("status") != "failed"
     result["condition_id"] = condition_id
+    if not result["success"]:
+        result["error"] = "Transaction reverted on-chain. The market may not be resolved yet — resolution can take hours or days after the event ends. Check back later."
+    if resolution_warning:
+        result["warning"] = resolution_warning
     _out(result)
 
 
@@ -1156,23 +1238,30 @@ async def cmd_config(args):
     client = _get_client()
     sig_type = int(os.environ.get("POLY_SIGNATURE_TYPE", "0"))
     sig_type_label = {0: "EOA", 1: "Proxy", 2: "Gnosis Safe"}.get(sig_type, f"Unknown ({sig_type})")
-    _out({
-        "success": True,
-        "config": {
-            "wallet_address": os.environ.get("EVM_WALLET_ADDRESS", ""),
-            "funder_address": os.environ.get("POLY_FUNDER_ADDRESS", os.environ.get("EVM_WALLET_ADDRESS", "")),
-            "signature_type": sig_type,
-            "signature_type_label": sig_type_label,
-            "trading_configured": client.has_trading,
-            "builder": client.get_builder_status(),
-            "has_private_key": bool(os.environ.get("EVM_PRIVATE_KEY")),
-            "quality_thresholds": {
-                "min_liquidity_usd": 5000,
-                "max_spread_limit": 0.10,
-                "book_depth_multiplier": 1.5,
-            },
+    config = {
+        "wallet_address": os.environ.get("EVM_WALLET_ADDRESS", ""),
+        "funder_address": os.environ.get("POLY_FUNDER_ADDRESS", os.environ.get("EVM_WALLET_ADDRESS", "")),
+        "signature_type": sig_type,
+        "signature_type_label": sig_type_label,
+        "trading_configured": client.has_trading,
+        "builder": client.get_builder_status(),
+        "has_private_key": bool(os.environ.get("EVM_PRIVATE_KEY")),
+        "quality_thresholds": {
+            "min_liquidity_usd": 5000,
+            "max_spread_limit": 0.10,
+            "book_depth_multiplier": 1.5,
         },
-    })
+    }
+    # Surface CLOB init failure reason
+    if not client.has_trading and os.environ.get("EVM_PRIVATE_KEY") and os.environ.get("EVM_WALLET_ADDRESS"):
+        config["clob_init_error"] = client._clob_init_error or "Unknown error during CLOB initialization"
+    # Warn about proxy misconfiguration
+    warnings = []
+    if sig_type in (1, 2) and not os.environ.get("POLY_FUNDER_ADDRESS"):
+        warnings.append(f"POLY_SIGNATURE_TYPE={sig_type} ({sig_type_label}) but POLY_FUNDER_ADDRESS is not set. Set it to your proxy/safe contract address.")
+    if warnings:
+        config["warnings"] = warnings
+    _out({"success": True, "config": config})
 
 
 # ---------------------------------------------------------------------------
@@ -1292,7 +1381,8 @@ def main():
     p.add_argument("--market-slug", default=None, help="Exact market slug from `resolve`")
     p.add_argument("--outcome", required=True, help="Outcome to sell")
     p.add_argument("--price", type=float, default=None, help="Limit price 0.01-0.99")
-    p.add_argument("--shares", type=float, required=True, help="Number of shares to sell")
+    p.add_argument("--shares", type=float, default=None, help="Number of shares to sell (or use --amount-usd)")
+    p.add_argument("--amount-usd", type=float, default=None, help="USD amount to sell (alternative to --shares, requires --price or uses midpoint)")
     p.add_argument("--market-order", action="store_true", help="Sell immediately at available book prices")
     p.add_argument("--market-tif", default="FOK", choices=["FOK", "FAK"], help="Time in force for market sells")
     p.add_argument("--time-in-force", default="GTC", choices=["GTC", "FAK", "GTD"], help="Time in force for limit sells")
@@ -1301,7 +1391,10 @@ def main():
     p.add_argument("--skip-spread-check", action="store_true", help="Bypass maximum spread check")
 
     # balance
-    sub.add_parser("balance", help="Check USDC.e balance (trading-ready)")
+    sub.add_parser("balance", help="Check USDC.e balance (wallet and trading)")
+
+    # approve-trading
+    sub.add_parser("approve-trading", help="Approve exchange contract to spend wallet USDC.e")
 
     # positions
     p = sub.add_parser("positions", help="View current positions and P&L")
@@ -1448,6 +1541,7 @@ def main():
         "buy": cmd_buy,
         "sell": cmd_sell,
         "balance": cmd_balance,
+        "approve-trading": cmd_approve_trading,
         "positions": cmd_positions,
         "trades": cmd_trades,
         "my-orders": cmd_my_orders,
@@ -1477,7 +1571,28 @@ def main():
     try:
         asyncio.run(handler(args))
     except Exception as e:
-        _out({"success": False, "error": str(e)})
+        error_str = str(e)
+        error_code = "UNKNOWN_ERROR"
+        hint = None
+        err_lower = error_str.lower()
+        if "insufficient funds" in err_lower or "gas" in err_lower:
+            error_code = "INSUFFICIENT_GAS"
+            hint = "Send a small amount of POL (Polygon's native token) to your wallet for transaction fees."
+        elif "allowance" in err_lower:
+            error_code = "ALLOWANCE_ERROR"
+            hint = "Run 'approve-trading' to authorize the exchange contract."
+        elif "429" in error_str or "rate" in err_lower:
+            error_code = "RATE_LIMITED"
+            hint = "Too many requests. Wait a moment and try again."
+        elif "timeout" in err_lower or "timed out" in err_lower:
+            error_code = "TIMEOUT"
+            hint = "Request timed out. Check network connectivity and try again."
+        elif "order rejected" in err_lower or "order failed" in err_lower:
+            error_code = "ORDER_REJECTED"
+        result = {"success": False, "error": error_str, "error_code": error_code}
+        if hint:
+            result["hint"] = hint
+        _out(result)
         sys.exit(1)
 
 

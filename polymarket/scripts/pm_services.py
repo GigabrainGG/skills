@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import os
 import re
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -949,7 +950,7 @@ GEOBLOCK_API_URL = "https://polymarket.com/api/geoblock"
 # ---------------------------------------------------------------------------
 # Polygon web3 constants (lazy-loaded for CTF token operations)
 # ---------------------------------------------------------------------------
-POLYGON_RPC_URL = "https://polygon-rpc.com"
+POLYGON_RPC_URL = os.environ.get("POLYGON_RPC_URL", "https://polygon.drpc.org")
 CTF_ADDRESS = "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045"
 NEG_RISK_ADAPTER_ADDRESS = "0xC5d563A36AE78145C45a50134d48A1215220f80a"
 USDC_E_ADDRESS = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
@@ -1045,6 +1046,13 @@ ERC20_APPROVE_ABI = [
         "stateMutability": "view",
         "type": "function",
     },
+    {
+        "inputs": [{"name": "account", "type": "address"}],
+        "name": "balanceOf",
+        "outputs": [{"name": "", "type": "uint256"}],
+        "stateMutability": "view",
+        "type": "function",
+    },
 ]
 
 CTF_APPROVAL_ABI = [
@@ -1092,9 +1100,11 @@ class PMClient:
         self._http: httpx.AsyncClient | None = None
         self._clob = None
         self._builder_client = None
-        self._wallet_address: str = funder_address
+        self._wallet_address: str = funder_address  # funder/proxy address for data lookups
+        self._signer_address: str = ""  # derived from private key, used for signing
         self._signature_type: int = signature_type
         self._private_key: str = private_key
+        self._clob_init_error: str = ""  # surface init failures to the user
         self.builder_config = self._build_builder_config(
             builder_api_key=builder_api_key,
             builder_secret=builder_secret,
@@ -1166,12 +1176,13 @@ class PMClient:
             self._clob.set_api_creds(creds)
 
             from eth_account import Account
-            self._wallet_address = Account.from_key(private_key).address
-            logger.info(f"CLOB client initialized for {self._wallet_address}")
+            self._signer_address = Account.from_key(private_key).address
+            logger.info(f"CLOB client initialized for signer={self._signer_address} funder={self._wallet_address}")
             if self._clob.can_builder_auth():
                 logger.info("Polymarket builder attribution enabled")
         except Exception as e:
             logger.error(f"Failed to initialize CLOB client: {e}")
+            self._clob_init_error = str(e)
             self._clob = None
 
     @property
@@ -1189,15 +1200,41 @@ class PMClient:
             await self._http.aclose()
             self._http = None
 
+    async def _request_with_retry(
+        self, method: str, url: str, *, params: dict | None = None, json_body: dict | None = None,
+        max_retries: int = 3,
+    ) -> Any:
+        import asyncio as _aio
+
+        last_exc = None
+        for attempt in range(max_retries + 1):
+            try:
+                if method == "GET":
+                    resp = await self.http.get(url, params=params)
+                else:
+                    resp = await self.http.post(url, json=json_body)
+                if resp.status_code in (429, 500, 502, 503, 504) and attempt < max_retries:
+                    wait = min(2 ** attempt, 8)
+                    logger.warning(f"HTTP {resp.status_code} from {url}, retrying in {wait}s (attempt {attempt + 1}/{max_retries})")
+                    await _aio.sleep(wait)
+                    continue
+                resp.raise_for_status()
+                return resp.json()
+            except (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout) as e:
+                last_exc = e
+                if attempt < max_retries:
+                    wait = min(2 ** attempt, 8)
+                    logger.warning(f"Connection error for {url}: {e}, retrying in {wait}s (attempt {attempt + 1}/{max_retries})")
+                    await _aio.sleep(wait)
+                    continue
+                raise
+        raise last_exc  # should not reach here, but safety net
+
     async def _get(self, url: str, params: dict | None = None) -> Any:
-        resp = await self.http.get(url, params=params)
-        resp.raise_for_status()
-        return resp.json()
+        return await self._request_with_retry("GET", url, params=params)
 
     async def _post(self, url: str, json_body: dict) -> Any:
-        resp = await self.http.post(url, json=json_body)
-        resp.raise_for_status()
-        return resp.json()
+        return await self._request_with_retry("POST", url, json_body=json_body)
 
     # -- Gamma API (raw) --
 
@@ -1509,20 +1546,24 @@ class PMClient:
 
     # -- CLOB API (prices, orderbook) --
 
+    @property
+    def _read_clob(self):
+        """Cached read-only CLOB client (no auth needed)."""
+        if not hasattr(self, "_read_clob_client") or self._read_clob_client is None:
+            from py_clob_client.client import ClobClient
+            self._read_clob_client = ClobClient(host=CLOB_API_URL)
+        return self._read_clob_client
+
     def get_orderbook(self, token_id: str) -> dict:
         """Get order book for a token from CLOB (no auth needed)."""
-        from py_clob_client.client import ClobClient
-        read_client = ClobClient(host=CLOB_API_URL)
-        book = _coerce_jsonable(read_client.get_order_book(token_id))
+        book = _coerce_jsonable(self._read_clob.get_order_book(token_id))
         if isinstance(book, dict):
             return book
         return {"bids": [], "asks": []}
 
     def get_midpoint(self, token_id: str) -> float | None:
         """Get midpoint price from CLOB."""
-        from py_clob_client.client import ClobClient
-        read_client = ClobClient(host=CLOB_API_URL)
-        mid = read_client.get_midpoint(token_id)
+        mid = self._read_clob.get_midpoint(token_id)
         try:
             return float(mid) if mid else None
         except (ValueError, TypeError):
@@ -1530,17 +1571,13 @@ class PMClient:
 
     def get_spread(self, token_id: str) -> dict | None:
         """Get bid-ask spread from CLOB."""
-        from py_clob_client.client import ClobClient
-        read_client = ClobClient(host=CLOB_API_URL)
-        spread = read_client.get_spread(token_id)
+        spread = self._read_clob.get_spread(token_id)
         return spread if isinstance(spread, dict) else None
 
     def get_tick_size(self, token_id: str) -> float:
         """Get minimum price increment for a token."""
-        from py_clob_client.client import ClobClient
-        read_client = ClobClient(host=CLOB_API_URL)
         try:
-            tick = read_client.get_tick_size(token_id)
+            tick = self._read_clob.get_tick_size(token_id)
             return float(tick) if tick else 0.01
         except Exception:
             return 0.01
@@ -1778,7 +1815,6 @@ class PMClient:
         expire_seconds: int | None = None,
     ) -> str:
         """Place a limit buy order (GTC). Returns order_id."""
-        from py_clob_client.clob_types import OrderArgs
         from py_clob_client.order_builder.constants import BUY
         return self._place_order(
             token_id,
@@ -1800,7 +1836,6 @@ class PMClient:
         expire_seconds: int | None = None,
     ) -> str:
         """Place a limit sell order (GTC). Returns order_id."""
-        from py_clob_client.clob_types import OrderArgs
         from py_clob_client.order_builder.constants import SELL
         return self._place_order(
             token_id,
@@ -1820,7 +1855,7 @@ class PMClient:
         order_type: str = "FOK",
     ) -> str:
         """Place a market buy order (FOK). Spends amount_usd. Returns order_id."""
-        from py_clob_client.clob_types import MarketOrderArgs, OrderType
+        from py_clob_client.clob_types import MarketOrderArgs, OrderType, PartialCreateOrderOptions
         from py_clob_client.order_builder.constants import BUY
         self._require_trading()
         order_enum = getattr(OrderType, order_type)
@@ -1830,7 +1865,8 @@ class PMClient:
             side=BUY,
             order_type=order_enum,
         )
-        signed = self._clob.create_market_order(args)
+        options = PartialCreateOrderOptions(neg_risk=neg_risk) if neg_risk else None
+        signed = self._clob.create_market_order(args, options=options)
         resp = self._post_order_with_allowance_retry(
             signed,
             order_enum,
@@ -1847,7 +1883,7 @@ class PMClient:
         order_type: str = "FOK",
     ) -> str:
         """Place a market sell order. Sells shares immediately. Returns order_id."""
-        from py_clob_client.clob_types import MarketOrderArgs, OrderType
+        from py_clob_client.clob_types import MarketOrderArgs, OrderType, PartialCreateOrderOptions
         from py_clob_client.order_builder.constants import SELL
 
         self._require_trading()
@@ -1858,7 +1894,8 @@ class PMClient:
             side=SELL,
             order_type=order_enum,
         )
-        signed = self._clob.create_market_order(args)
+        options = PartialCreateOrderOptions(neg_risk=neg_risk) if neg_risk else None
+        signed = self._clob.create_market_order(args, options=options)
         resp = self._post_order_with_allowance_retry(
             signed,
             order_enum,
@@ -1878,7 +1915,7 @@ class PMClient:
         order_type: str = "GTC",
         expire_seconds: int | None = None,
     ) -> str:
-        from py_clob_client.clob_types import OrderArgs, OrderType
+        from py_clob_client.clob_types import OrderArgs, OrderType, PartialCreateOrderOptions
 
         self._require_trading()
 
@@ -1903,7 +1940,8 @@ class PMClient:
             expiration=int(datetime.now(UTC).timestamp()) + expire_seconds if expire_seconds else 0,
         )
 
-        signed_order = self._clob.create_order(order_args)
+        options = PartialCreateOrderOptions(neg_risk=neg_risk) if neg_risk else None
+        signed_order = self._clob.create_order(order_args, options=options)
         order_enum = getattr(OrderType, order_type)
         resp = self._post_order_with_allowance_retry(
             signed_order,
@@ -1917,7 +1955,9 @@ class PMClient:
         if isinstance(resp, dict):
             order_id = resp.get("orderID") or resp.get("id", "")
             if not resp.get("success", True) and not order_id:
-                raise RuntimeError(f"Order failed: {resp}")
+                # Parse CLOB error into a human-readable message
+                error_msg = resp.get("errorMsg") or resp.get("error") or resp.get("message") or str(resp)
+                raise RuntimeError(f"Order rejected by exchange: {error_msg}")
             return order_id
         return str(resp)
 
@@ -2004,6 +2044,42 @@ class PMClient:
         except Exception as e:
             logger.error(f"Failed to get balance: {e}")
             return 0.0
+
+    def get_wallet_usdc_balance(self) -> float:
+        """Get on-chain USDC.e balance from the Polygon wallet (uses funder address for proxy wallets)."""
+        try:
+            w3 = self._get_w3()
+            address = self._wallet_address  # funder/proxy address — where USDC.e actually lives
+            usdc = w3.eth.contract(
+                address=w3.to_checksum_address(USDC_E_ADDRESS),
+                abi=ERC20_APPROVE_ABI,
+            )
+            raw = usdc.functions.balanceOf(w3.to_checksum_address(address)).call()
+            return float(raw) / 1_000_000
+        except Exception as e:
+            logger.error(f"Failed to get wallet USDC.e balance: {e}")
+            return 0.0
+
+    def get_pol_balance(self) -> float:
+        """Get native POL (gas token) balance on Polygon."""
+        try:
+            w3 = self._get_w3()
+            address = self._signer_address or self._wallet_address
+            raw = w3.eth.get_balance(w3.to_checksum_address(address))
+            return float(w3.from_wei(raw, "ether"))
+        except Exception as e:
+            logger.error(f"Failed to get POL balance: {e}")
+            return 0.0
+
+    def approve_trading(self) -> dict[str, Any]:
+        """Approve the CLOB exchange contract to spend wallet USDC.e."""
+        self._require_trading()
+        from py_clob_client.clob_types import AssetType, BalanceAllowanceParams
+
+        self._clob.update_balance_allowance(
+            BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
+        )
+        return {"approved": True}
 
     # -- Web3 CTF Operations --
 
