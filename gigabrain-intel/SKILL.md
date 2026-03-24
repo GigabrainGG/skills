@@ -27,7 +27,10 @@ All commands return JSON to stdout.
 
 - Requires `GIGABRAIN_API_URL` (base URL, e.g. `https://api.gigabrain.gg`)
 - Requires `GIGABRAIN_API_KEY` (format: `gb_sk_...`, get from https://gigabrain.gg/profile?tab=api)
+- Optional `GIGABRAIN_MODEL` — model ID from the provider's API (e.g. `gpt-4o`, `claude-sonnet-4-20250514`). Injected by daemon config.
+- Optional `GIGABRAIN_MODEL_PROVIDER` — provider name: `openai`, `anthropic`, `xai`, `openrouter`, or `venice`. Must match the provider your API key is connected for. Injected by daemon config.
 - If `GIGABRAIN_API_URL` is missing, the script exits with a JSON error
+- If model/provider env vars are not set, the API uses its default model
 
 ## The 7 Specialist Analysts
 
