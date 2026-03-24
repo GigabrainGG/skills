@@ -21,16 +21,23 @@ import sys
 import httpx
 
 
-async def _query(api_url: str, api_key: str, question: str) -> dict:
+async def _query(api_url: str, api_key: str, question: str,
+                  model: str = "", model_provider: str = "") -> dict:
     """Send a query to the Brain API."""
     headers = {}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
+    payload: dict = {"message": question}
+    if model:
+        payload["model"] = model
+    if model_provider:
+        payload["model_provider"] = model_provider
+
     async with httpx.AsyncClient(timeout=600, headers=headers) as client:
         resp = await client.post(
             f"{api_url}/v1/chat",
-            json={"message": question},
+            json=payload,
         )
         resp.raise_for_status()
         data = resp.json()
@@ -41,42 +48,48 @@ async def _query(api_url: str, api_key: str, question: str) -> dict:
 def _get_config():
     api_url = os.environ.get("GIGABRAIN_API_URL", "")
     api_key = os.environ.get("GIGABRAIN_API_KEY", "")
+    model = os.environ.get("GIGABRAIN_MODEL", "")
+    model_provider = os.environ.get("GIGABRAIN_MODEL_PROVIDER", "")
     if not api_url:
         print(json.dumps({"success": False, "error": "GIGABRAIN_API_URL not set."}))
         sys.exit(1)
-    return api_url.rstrip("/"), api_key
+    return api_url.rstrip("/"), api_key, model, model_provider
 
 
 async def cmd_web_search(args):
-    api_url, api_key = _get_config()
-    result = await _query(api_url, api_key, f"Web search: {args.query}")
+    api_url, api_key, model, model_provider = _get_config()
+    result = await _query(api_url, api_key, f"Web search: {args.query}",
+                          model, model_provider)
     print(json.dumps(result, default=str))
 
 
 async def cmd_news_search(args):
-    api_url, api_key = _get_config()
+    api_url, api_key, model, model_provider = _get_config()
     result = await _query(
         api_url, api_key,
         f"Search latest news about: {args.query}. "
-        f"Summarize key headlines with dates and sources."
+        f"Summarize key headlines with dates and sources.",
+        model, model_provider,
     )
     print(json.dumps(result, default=str))
 
 
 async def cmd_ask(args):
-    api_url, api_key = _get_config()
-    result = await _query(api_url, api_key, args.question)
+    api_url, api_key, model, model_provider = _get_config()
+    result = await _query(api_url, api_key, args.question,
+                          model, model_provider)
     print(json.dumps(result, default=str))
 
 
 async def cmd_market_analysis(args):
-    api_url, api_key = _get_config()
+    api_url, api_key, model, model_provider = _get_config()
     result = await _query(
         api_url, api_key,
         f"Give me a concise but high-signal market analysis for {args.coin}. "
         f"Include: current price drivers, market structure, sentiment/positioning, "
         f"key recent developments, important levels or technical context, catalysts, "
-        f"and risk factors. Be specific with data points."
+        f"and risk factors. Be specific with data points.",
+        model, model_provider,
     )
     print(json.dumps(result, default=str))
 
