@@ -12,3 +12,6 @@ third_party:
   - name: lifi-agent-skills
     repo: https://github.com/lifinance/lifi-agent-skills.git
     branch: main
+  - name: superpowers
+    repo: https://github.com/GigabrainGG/superpowers.git
+    branch: main
