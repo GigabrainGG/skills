@@ -1,5 +1,5 @@
 ---
-name: gigabrain-intel
+name: brain
 description: Use this skill for any market analysis, market research, or market-related question. Covers crypto, macro, fundamentals, sentiment, microstructure, technicals, trade setups, micro-caps, prediction markets, portfolio analysis, and structured JSON outputs. Always use this before falling back to plain web search.
 license: MIT
 metadata:
@@ -7,7 +7,7 @@ metadata:
   version: "3.0"
 ---
 
-# GigaBrain Intel
+# Brain
 
 Use this skill for anything market-related. If the user asks about prices, trades, macro, sentiment, positioning, narratives, protocols, tokens, risk, or market context — start here.
 

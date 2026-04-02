@@ -9,7 +9,7 @@ Open-source skills for [GigaBrain](https://gigabrain.gg) agents. Compatible with
 | `hyperliquid` | Trade perps, spot, and transfer USDC on HyperLiquid |
 | `polymarket` | Trade prediction markets on Polymarket |
 | `polymarket-deep-research` | Read-only thesis building and market research for Polymarket |
-| `gigabrain-intel` | Primary Brain market intelligence stack for macro, microstructure, fundamentals, sentiment, and Polymarket context |
+| `brain` | Primary Brain market intelligence stack for macro, microstructure, fundamentals, sentiment, and Polymarket context |
 | `portfolio-tracker` | Portfolio overview and P&L tracking |
 
 ## How It Works
