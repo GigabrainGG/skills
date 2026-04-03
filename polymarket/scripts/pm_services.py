@@ -2088,40 +2088,86 @@ class PMClient:
             return 0.0
 
     def approve_trading(self) -> dict[str, Any]:
-        """Approve the CLOB exchange contracts to spend wallet USDC.e.
+        """Approve all Polymarket exchange contracts for trading.
 
-        Does two things:
-        1. On-chain ERC20 approve(max) to both exchange contracts (regular + neg_risk)
-        2. Tells CLOB to re-read the on-chain allowance
+        Follows the official Polymarket approval flow:
+        - 3 targets: CTF Exchange, Neg Risk Exchange, Neg Risk Adapter
+        - For each: ERC20 approve (USDC.e) + ERC1155 setApprovalForAll (CTF)
+        - Then tell CLOB to re-read on-chain allowances
         """
         self._require_trading()
         self._require_web3()
+        from eth_account import Account
 
-        max_amount = 2**256 - 1
-        results = []
+        w3 = self._get_w3()
+        account = Account.from_key(self._private_key)
+        nonce = w3.eth.get_transaction_count(account.address)
 
-        # Approve both exchange contracts (regular and neg_risk)
-        regular_exchange = self._clob.get_exchange_address(neg_risk=False)
-        neg_risk_exchange = self._clob.get_exchange_address(neg_risk=True)
-
-        for label, spender in [("regular", regular_exchange), ("neg_risk", neg_risk_exchange)]:
-            if spender:
-                tx_result = self._ensure_usdc_approval(spender, max_amount)
-                if tx_result:
-                    results.append({"exchange": label, "address": spender, "tx": tx_result.get("tx_hash", "")})
-                else:
-                    results.append({"exchange": label, "address": spender, "status": "already_approved"})
-
-        # Also approve CTF contract for conditional token operations
-        self._ensure_ctf_approval(regular_exchange)
-        if neg_risk_exchange:
-            self._ensure_ctf_approval(neg_risk_exchange)
-
-        # Now tell the CLOB to re-read on-chain allowances
-        from py_clob_client.clob_types import AssetType, BalanceAllowanceParams
-        self._clob.update_balance_allowance(
-            BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
+        max_uint256 = 2**256 - 1
+        usdc = w3.eth.contract(
+            address=w3.to_checksum_address(USDC_E_ADDRESS),
+            abi=ERC20_APPROVE_ABI,
         )
+        ctf = w3.eth.contract(
+            address=w3.to_checksum_address(CTF_ADDRESS),
+            abi=CTF_APPROVAL_ABI,
+        )
+
+        # 3 targets per official Polymarket gist
+        targets = [
+            ("ctf_exchange", self._clob.get_exchange_address(neg_risk=False)),
+            ("neg_risk_exchange", self._clob.get_exchange_address(neg_risk=True)),
+            ("neg_risk_adapter", NEG_RISK_ADAPTER_ADDRESS),
+        ]
+
+        results = []
+        for label, target in targets:
+            if not target:
+                continue
+            target_cs = w3.to_checksum_address(target)
+
+            # ERC20 approve USDC.e
+            try:
+                current_allowance = usdc.functions.allowance(account.address, target_cs).call()
+                if current_allowance < max_uint256:
+                    tx = usdc.functions.approve(target_cs, max_uint256).build_transaction({
+                        "chainId": 137, "from": account.address, "nonce": nonce,
+                    })
+                    signed = account.sign_transaction(tx)
+                    tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+                    w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+                    nonce += 1
+                    results.append({"target": label, "type": "erc20_approve", "tx": tx_hash.hex()})
+                else:
+                    results.append({"target": label, "type": "erc20_approve", "status": "already_approved"})
+            except Exception as e:
+                results.append({"target": label, "type": "erc20_approve", "error": str(e)})
+
+            # ERC1155 setApprovalForAll for CTF
+            try:
+                is_approved = ctf.functions.isApprovedForAll(account.address, target_cs).call()
+                if not is_approved:
+                    tx = ctf.functions.setApprovalForAll(target_cs, True).build_transaction({
+                        "chainId": 137, "from": account.address, "nonce": nonce,
+                    })
+                    signed = account.sign_transaction(tx)
+                    tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+                    w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+                    nonce += 1
+                    results.append({"target": label, "type": "ctf_approval", "tx": tx_hash.hex()})
+                else:
+                    results.append({"target": label, "type": "ctf_approval", "status": "already_approved"})
+            except Exception as e:
+                results.append({"target": label, "type": "ctf_approval", "error": str(e)})
+
+        # Tell CLOB to re-read on-chain allowances (always runs even if approvals fail)
+        try:
+            from py_clob_client.clob_types import AssetType, BalanceAllowanceParams
+            self._clob.update_balance_allowance(
+                BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
+            )
+        except Exception as e:
+            results.append({"target": "clob", "type": "update_balance_allowance", "error": str(e)})
 
         return {"approved": True, "approvals": results}
 
