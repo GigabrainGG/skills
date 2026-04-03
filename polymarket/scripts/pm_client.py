@@ -630,61 +630,72 @@ async def _execute_trade(args, side: str):
         return
 
     # Execute the order
-    if args.market_order:
-        if is_buy:
-            order_id = client.market_buy(
-                token_id=token_id, amount_usd=args.amount_usd,
-                neg_risk=market.neg_risk, order_type=args.market_tif,
-            )
-            _out({
-                "success": True, "action": "market_buy", "market": market.question,
-                "outcome": args.outcome, "amount_usd": args.amount_usd, "order_id": order_id,
-                "time_in_force": args.market_tif,
-                "builder": client.get_builder_status(),
-                "validation": _validation_summary(validation),
-            })
+    try:
+        if args.market_order:
+            if is_buy:
+                order_id = client.market_buy(
+                    token_id=token_id, amount_usd=args.amount_usd,
+                    neg_risk=market.neg_risk, order_type=args.market_tif,
+                )
+                _out({
+                    "success": True, "action": "market_buy", "market": market.question,
+                    "outcome": args.outcome, "amount_usd": args.amount_usd, "order_id": order_id,
+                    "time_in_force": args.market_tif,
+                    "builder": client.get_builder_status(),
+                    "validation": _validation_summary(validation),
+                })
+            else:
+                order_id = client.market_sell(
+                    token_id=token_id, shares=shares,
+                    neg_risk=market.neg_risk, order_type=args.market_tif,
+                )
+                _out({
+                    "success": True, "action": "market_sell", "market": market.question,
+                    "outcome": args.outcome, "shares": round(shares, 2), "order_id": order_id,
+                    "time_in_force": args.market_tif,
+                    "builder": client.get_builder_status(),
+                    "validation": _validation_summary(validation),
+                })
         else:
-            order_id = client.market_sell(
-                token_id=token_id, shares=shares,
-                neg_risk=market.neg_risk, order_type=args.market_tif,
-            )
-            _out({
-                "success": True, "action": "market_sell", "market": market.question,
-                "outcome": args.outcome, "shares": round(shares, 2), "order_id": order_id,
-                "time_in_force": args.market_tif,
-                "builder": client.get_builder_status(),
-                "validation": _validation_summary(validation),
-            })
-    else:
-        if is_buy:
-            buy_shares = args.amount_usd / args.price
-            order_id = client.buy(
-                token_id=token_id, price=args.price, size=buy_shares,
-                neg_risk=market.neg_risk, order_type=args.time_in_force,
-                expire_seconds=args.expire_seconds,
-            )
-            _out({
-                "success": True, "action": "limit_buy", "market": market.question,
-                "outcome": args.outcome, "price": args.price,
-                "shares": round(buy_shares, 2), "cost_usd": args.amount_usd, "order_id": order_id,
-                "time_in_force": args.time_in_force,
-                "builder": client.get_builder_status(),
-                "validation": _validation_summary(validation),
-            })
-        else:
-            order_id = client.sell(
-                token_id=token_id, price=args.price, size=shares,
-                neg_risk=market.neg_risk, order_type=args.time_in_force,
-                expire_seconds=args.expire_seconds,
-            )
-            _out({
-                "success": True, "action": "limit_sell", "market": market.question,
-                "outcome": args.outcome, "price": args.price,
-                "shares": round(shares, 2), "proceeds_usd": round(shares * args.price, 2), "order_id": order_id,
-                "time_in_force": args.time_in_force,
-                "builder": client.get_builder_status(),
-                "validation": _validation_summary(validation),
-            })
+            if is_buy:
+                buy_shares = args.amount_usd / args.price
+                order_id = client.buy(
+                    token_id=token_id, price=args.price, size=buy_shares,
+                    neg_risk=market.neg_risk, order_type=args.time_in_force,
+                    expire_seconds=args.expire_seconds,
+                )
+                _out({
+                    "success": True, "action": "limit_buy", "market": market.question,
+                    "outcome": args.outcome, "price": args.price,
+                    "shares": round(buy_shares, 2), "cost_usd": args.amount_usd, "order_id": order_id,
+                    "time_in_force": args.time_in_force,
+                    "builder": client.get_builder_status(),
+                    "validation": _validation_summary(validation),
+                })
+            else:
+                order_id = client.sell(
+                    token_id=token_id, price=args.price, size=shares,
+                    neg_risk=market.neg_risk, order_type=args.time_in_force,
+                    expire_seconds=args.expire_seconds,
+                )
+                _out({
+                    "success": True, "action": "limit_sell", "market": market.question,
+                    "outcome": args.outcome, "price": args.price,
+                    "shares": round(shares, 2), "proceeds_usd": round(shares * args.price, 2), "order_id": order_id,
+                    "time_in_force": args.time_in_force,
+                    "builder": client.get_builder_status(),
+                    "validation": _validation_summary(validation),
+                })
+    except Exception as e:
+        error_str = str(e)
+        _out({
+            "success": False,
+            "error": error_str if error_str else f"Order failed: {type(e).__name__}",
+            "error_code": "ORDER_FAILED",
+            "market": market.question,
+            "outcome": args.outcome,
+            "exception_type": type(e).__name__,
+        })
 
 
 async def cmd_buy(args):
