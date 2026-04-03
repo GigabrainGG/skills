@@ -2220,7 +2220,7 @@ class PMClient:
         max_uint256 = 2**256 - 1
         tx = usdc.functions.approve(
             w3.to_checksum_address(spender), max_uint256
-        ).build_transaction({"chainId": 137})
+        ).build_transaction({"chainId": 137, "from": account.address})
         return self._sign_and_send_tx(tx)
 
     def _ensure_ctf_approval(self, operator: str) -> dict[str, Any] | None:
@@ -2243,7 +2243,7 @@ class PMClient:
 
         tx = ctf.functions.setApprovalForAll(
             w3.to_checksum_address(operator), True
-        ).build_transaction({"chainId": 137})
+        ).build_transaction({"chainId": 137, "from": account.address})
         return self._sign_and_send_tx(tx)
 
     def split_position(
