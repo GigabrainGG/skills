@@ -43,26 +43,30 @@ async def _query_stream(api_url: str, api_key: str, question: str,
             json=payload,
         ) as resp:
             resp.raise_for_status()
-            buffer = ""
-            async for chunk in resp.aiter_text():
-                buffer += chunk
-                while "\n\n" in buffer:
-                    event_str, buffer = buffer.split("\n\n", 1)
-                    for line in event_str.split("\n"):
-                        if line.startswith("data: "):
-                            raw = line[6:]
-                            try:
-                                evt = json.loads(raw)
-                            except json.JSONDecodeError:
-                                continue
-                            event_type = evt.get("event", "")
-                            if event_type == "RunResponseContent":
-                                content_parts.append(evt.get("content", ""))
-                            elif event_type == "error":
-                                return {
-                                    "success": False,
-                                    "error": evt.get("message", "Unknown stream error"),
-                                }
+            # Use aiter_lines() to handle \r\n, \r, and \n line endings
+            # from any upstream proxy. SSE events are delimited by blank lines.
+            event_lines: list[str] = []
+            async for line in resp.aiter_lines():
+                if line:
+                    event_lines.append(line)
+                    continue
+                # Blank line = end of SSE event
+                for event_line in event_lines:
+                    if not event_line.startswith("data: "):
+                        continue
+                    try:
+                        evt = json.loads(event_line[6:])
+                    except json.JSONDecodeError:
+                        continue
+                    event_type = evt.get("event", "")
+                    if event_type == "RunResponseContent":
+                        content_parts.append(evt.get("content", ""))
+                    elif event_type == "error":
+                        return {
+                            "success": False,
+                            "error": evt.get("message", "Unknown stream error"),
+                        }
+                event_lines = []
 
     content = "".join(content_parts)
     if not content:
