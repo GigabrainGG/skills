@@ -2044,7 +2044,11 @@ class PMClient:
         """Get USDC.e balance from CLOB (trading-ready balance)."""
         self._require_trading()
         try:
-            raw = self._clob.get_balance()
+            from py_clob_client.clob_types import AssetType, BalanceAllowanceParams
+            resp = self._clob.get_balance_allowance(
+                BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
+            )
+            raw = resp.get("balance", "0") if isinstance(resp, dict) else "0"
             return float(raw) / 1_000_000 if raw else 0.0
         except Exception as e:
             logger.error(f"Failed to get balance: {e}")
