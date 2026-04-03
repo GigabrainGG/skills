@@ -1959,9 +1959,16 @@ class PMClient:
     def _extract_order_id(self, resp: Any) -> str:
         if isinstance(resp, dict):
             order_id = resp.get("orderID") or resp.get("id", "")
-            if not resp.get("success", True) and not order_id:
-                # Parse CLOB error into a human-readable message
-                error_msg = resp.get("errorMsg") or resp.get("error") or resp.get("message") or str(resp)
+            if not resp.get("success", True):
+                error_msg = (
+                    resp.get("errorMsg")
+                    or resp.get("error")
+                    or resp.get("message")
+                    or resp.get("error_message")
+                    or ""
+                )
+                if not error_msg:
+                    error_msg = json.dumps(resp)
                 raise RuntimeError(f"Order rejected by exchange: {error_msg}")
             return order_id
         return str(resp)
