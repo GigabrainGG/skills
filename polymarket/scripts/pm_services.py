@@ -2088,14 +2088,42 @@ class PMClient:
             return 0.0
 
     def approve_trading(self) -> dict[str, Any]:
-        """Approve the CLOB exchange contract to spend wallet USDC.e."""
-        self._require_trading()
-        from py_clob_client.clob_types import AssetType, BalanceAllowanceParams
+        """Approve the CLOB exchange contracts to spend wallet USDC.e.
 
+        Does two things:
+        1. On-chain ERC20 approve(max) to both exchange contracts (regular + neg_risk)
+        2. Tells CLOB to re-read the on-chain allowance
+        """
+        self._require_trading()
+        self._require_web3()
+
+        max_amount = 2**256 - 1
+        results = []
+
+        # Approve both exchange contracts (regular and neg_risk)
+        regular_exchange = self._clob.get_exchange_address(neg_risk=False)
+        neg_risk_exchange = self._clob.get_exchange_address(neg_risk=True)
+
+        for label, spender in [("regular", regular_exchange), ("neg_risk", neg_risk_exchange)]:
+            if spender:
+                tx_result = self._ensure_usdc_approval(spender, max_amount)
+                if tx_result:
+                    results.append({"exchange": label, "address": spender, "tx": tx_result.get("tx_hash", "")})
+                else:
+                    results.append({"exchange": label, "address": spender, "status": "already_approved"})
+
+        # Also approve CTF contract for conditional token operations
+        self._ensure_ctf_approval(regular_exchange)
+        if neg_risk_exchange:
+            self._ensure_ctf_approval(neg_risk_exchange)
+
+        # Now tell the CLOB to re-read on-chain allowances
+        from py_clob_client.clob_types import AssetType, BalanceAllowanceParams
         self._clob.update_balance_allowance(
             BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
         )
-        return {"approved": True}
+
+        return {"approved": True, "approvals": results}
 
     # -- Web3 CTF Operations --
 
