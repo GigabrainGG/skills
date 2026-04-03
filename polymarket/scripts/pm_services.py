@@ -1430,10 +1430,15 @@ class PMClient:
 
         return rank_markets(query, _dedupe_markets(candidates), limit)
 
-    async def get_events(self, query: str | None = None, limit: int = 20, tag: str | None = None) -> list[dict]:
-        """Search events via Gamma API. Returns raw event dicts with nested markets."""
+    async def get_events(self, query: str | None = None, slug: str | None = None, limit: int = 20, tag: str | None = None) -> list[dict]:
+        """Search events via Gamma API. Returns raw event dicts with nested markets.
+
+        If slug is provided, does an exact slug lookup (no fuzzy search).
+        """
         params: dict[str, Any] = {"limit": limit, "active": True, "closed": False}
-        if query:
+        if slug:
+            params["slug"] = slug
+        elif query:
             params["query"] = query
         if tag:
             params["tag"] = tag

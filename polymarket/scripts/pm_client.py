@@ -229,7 +229,7 @@ async def cmd_events(args):
     from pm_services import Market
 
     client = _get_client()
-    events = await client.get_events(query=args.query, limit=args.limit, tag=args.tag)
+    events = await client.get_events(query=args.query, slug=args.slug, limit=args.limit, tag=args.tag)
 
     formatted = []
     for event in events:
@@ -1303,6 +1303,7 @@ def main():
     # events
     p = sub.add_parser("events", help="Search Polymarket events")
     p.add_argument("--query", default=None)
+    p.add_argument("--slug", default=None, help="Exact event slug lookup (bypasses fuzzy search)")
     p.add_argument("--limit", type=int, default=10)
     p.add_argument("--tag", default=None, help="Filter by tag (crypto, politics, sports, etc.)")
     p.add_argument("--market-limit", type=int, default=3, help="Markets to include per event")
