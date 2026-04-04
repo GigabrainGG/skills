@@ -2225,6 +2225,9 @@ class PMClient:
         """Redeem resolved CTF positions back to USDC.e."""
         self._require_web3()
         w3 = self._get_w3()
+        from eth_account import Account
+
+        account = Account.from_key(self._private_key)
 
         ctf = w3.eth.contract(
             address=w3.to_checksum_address(CTF_ADDRESS),
@@ -2239,7 +2242,7 @@ class PMClient:
             bytes.fromhex(ZERO_BYTES32[2:]),
             bytes.fromhex(condition_id if not condition_id.startswith("0x") else condition_id[2:]),
             index_sets,
-        ).build_transaction({"chainId": 137})
+        ).build_transaction({"chainId": 137, "from": account.address})
 
         return self._sign_and_send_tx(tx)
 
@@ -2301,6 +2304,9 @@ class PMClient:
         """Split USDC.e into YES + NO outcome tokens."""
         self._require_web3()
         w3 = self._get_w3()
+        from eth_account import Account
+
+        account = Account.from_key(self._private_key)
         amount_base = int(amount_usdc * 1_000_000)
 
         if neg_risk:
@@ -2313,7 +2319,7 @@ class PMClient:
             tx = contract.functions.splitPosition(
                 self._to_condition_bytes(condition_id),
                 amount_base,
-            ).build_transaction({"chainId": 137})
+            ).build_transaction({"chainId": 137, "from": account.address})
         else:
             spender = CTF_ADDRESS
             self._ensure_usdc_approval(spender, amount_base)
@@ -2327,7 +2333,7 @@ class PMClient:
                 self._to_condition_bytes(condition_id),
                 BINARY_PARTITION,
                 amount_base,
-            ).build_transaction({"chainId": 137})
+            ).build_transaction({"chainId": 137, "from": account.address})
 
         result = self._sign_and_send_tx(tx)
         result["amount_usdc"] = amount_usdc
@@ -2343,6 +2349,9 @@ class PMClient:
         """Merge YES + NO outcome tokens back into USDC.e."""
         self._require_web3()
         w3 = self._get_w3()
+        from eth_account import Account
+
+        account = Account.from_key(self._private_key)
         amount_base = int(amount_usdc * 1_000_000)
 
         if neg_risk:
@@ -2354,7 +2363,7 @@ class PMClient:
             tx = contract.functions.mergePositions(
                 self._to_condition_bytes(condition_id),
                 amount_base,
-            ).build_transaction({"chainId": 137})
+            ).build_transaction({"chainId": 137, "from": account.address})
         else:
             ctf = w3.eth.contract(
                 address=w3.to_checksum_address(CTF_ADDRESS),
@@ -2366,7 +2375,7 @@ class PMClient:
                 self._to_condition_bytes(condition_id),
                 BINARY_PARTITION,
                 amount_base,
-            ).build_transaction({"chainId": 137})
+            ).build_transaction({"chainId": 137, "from": account.address})
 
         result = self._sign_and_send_tx(tx)
         result["amount_usdc"] = amount_usdc
