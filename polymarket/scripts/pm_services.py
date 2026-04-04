@@ -1772,16 +1772,23 @@ class PMClient:
         normalized = haystack.lower()
         return "allowance" in normalized or "insufficient" in normalized
 
-    def _refresh_order_allowance(self, side: str, token_id: str | None = None) -> None:
-        from py_clob_client.clob_types import AssetType, BalanceAllowanceParams
-        from py_clob_client.order_builder.constants import BUY
+    def _ensure_allowances(self, token_id: str | None = None) -> None:
+        """Refresh both COLLATERAL and CONDITIONAL allowances before order placement.
 
-        asset_type = AssetType.COLLATERAL if side == BUY else AssetType.CONDITIONAL
-        params = BalanceAllowanceParams(
-            asset_type=asset_type,
-            token_id=token_id if asset_type == AssetType.CONDITIONAL else None,
+        Mirrors the working polystreet pattern: always call update_balance_allowance
+        for both asset types before every order so the CLOB API sees current on-chain state.
+        """
+        from py_clob_client.clob_types import AssetType, BalanceAllowanceParams
+
+        self._clob.update_balance_allowance(
+            BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
         )
-        self._clob.update_balance_allowance(params)
+        if token_id:
+            self._clob.update_balance_allowance(
+                BalanceAllowanceParams(
+                    asset_type=AssetType.CONDITIONAL, token_id=token_id
+                )
+            )
 
     def _post_order_with_allowance_retry(
         self,
@@ -1791,16 +1798,18 @@ class PMClient:
         side: str,
         token_id: str | None = None,
     ) -> Any:
+        # Proactively refresh allowances before posting (polystreet pattern)
+        self._ensure_allowances(token_id)
         try:
             resp = self._clob.post_order(signed_order, order_type)
             if isinstance(resp, dict) and not resp.get("success", True):
                 if self._needs_allowance_refresh(resp):
-                    self._refresh_order_allowance(side, token_id)
+                    self._ensure_allowances(token_id)
                     resp = self._clob.post_order(signed_order, order_type)
             return resp
         except Exception as e:
             if self._needs_allowance_refresh(e):
-                self._refresh_order_allowance(side, token_id)
+                self._ensure_allowances(token_id)
                 return self._clob.post_order(signed_order, order_type)
             raise
 
@@ -2088,14 +2097,32 @@ class PMClient:
             return 0.0
 
     def approve_trading(self) -> dict[str, Any]:
-        """Approve all Polymarket exchange contracts for trading.
+        """Approve Polymarket exchange contracts for trading.
 
-        Follows the official Polymarket approval flow:
-        - 3 targets: CTF Exchange, Neg Risk Exchange, Neg Risk Adapter
-        - For each: ERC20 approve (USDC.e) + ERC1155 setApprovalForAll (CTF)
-        - Then tell CLOB to re-read on-chain allowances
+        For EOA wallets (signature_type=0), performs on-chain ERC20 approve
+        and ERC1155 setApprovalForAll for all 3 exchange targets, then tells
+        the CLOB to re-read on-chain state.
+
+        For proxy/Safe wallets (signature_type=1,2), the proxy contract
+        already has approvals — just refreshes CLOB allowance state.
         """
         self._require_trading()
+        from py_clob_client.clob_types import AssetType, BalanceAllowanceParams
+
+        results = []
+
+        # Proxy/Safe wallets: just refresh CLOB state (approvals already exist)
+        if self._signature_type != 0:
+            try:
+                self._clob.update_balance_allowance(
+                    BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
+                )
+                results.append({"type": "collateral_allowance", "status": "refreshed"})
+            except Exception as e:
+                results.append({"type": "collateral_allowance", "error": str(e)})
+            return {"approved": True, "approvals": results}
+
+        # EOA wallets: on-chain approvals needed
         self._require_web3()
         from eth_account import Account
 
@@ -2113,14 +2140,12 @@ class PMClient:
             abi=CTF_APPROVAL_ABI,
         )
 
-        # 3 targets per official Polymarket gist
         targets = [
             ("ctf_exchange", self._clob.get_exchange_address(neg_risk=False)),
             ("neg_risk_exchange", self._clob.get_exchange_address(neg_risk=True)),
             ("neg_risk_adapter", NEG_RISK_ADAPTER_ADDRESS),
         ]
 
-        results = []
         for label, target in targets:
             if not target:
                 continue
@@ -2160,14 +2185,14 @@ class PMClient:
             except Exception as e:
                 results.append({"target": label, "type": "ctf_approval", "error": str(e)})
 
-        # Tell CLOB to re-read on-chain allowances (always runs even if approvals fail)
+        # Tell CLOB to re-read on-chain allowances
         try:
-            from py_clob_client.clob_types import AssetType, BalanceAllowanceParams
             self._clob.update_balance_allowance(
                 BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
             )
+            results.append({"type": "collateral_allowance", "status": "refreshed"})
         except Exception as e:
-            results.append({"target": "clob", "type": "update_balance_allowance", "error": str(e)})
+            results.append({"type": "collateral_allowance", "error": str(e)})
 
         return {"approved": True, "approvals": results}
 
