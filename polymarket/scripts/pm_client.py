@@ -748,7 +748,12 @@ async def cmd_positions(args):
             continue
         cur_price = float(p.get("curPrice", 0))
         resolved = p.get("resolved", False)
-        redeemable = bool(resolved and cur_price >= 0.99)
+        # Use API's redeemable field if present; fall back to heuristic
+        api_redeemable = p.get("redeemable")
+        if api_redeemable is not None:
+            redeemable = bool(api_redeemable)
+        else:
+            redeemable = bool(resolved and cur_price >= 0.99)
         if redeemable:
             redeemable_count += 1
         formatted.append({
