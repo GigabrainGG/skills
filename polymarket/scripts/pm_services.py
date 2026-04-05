@@ -2156,7 +2156,7 @@ class PMClient:
                 current_allowance = usdc.functions.allowance(account.address, target_cs).call()
                 if current_allowance < max_uint256:
                     tx = usdc.functions.approve(target_cs, max_uint256).build_transaction({
-                        "chainId": 137, "from": account.address, "nonce": nonce,
+                        "chain_id": 137, "from": account.address, "nonce": nonce,
                     })
                     signed = account.sign_transaction(tx)
                     tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
@@ -2173,7 +2173,7 @@ class PMClient:
                 is_approved = ctf.functions.isApprovedForAll(account.address, target_cs).call()
                 if not is_approved:
                     tx = ctf.functions.setApprovalForAll(target_cs, True).build_transaction({
-                        "chainId": 137, "from": account.address, "nonce": nonce,
+                        "chain_id": 137, "from": account.address, "nonce": nonce,
                     })
                     signed = account.sign_transaction(tx)
                     tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
@@ -2228,8 +2228,8 @@ class PMClient:
             tx["nonce"] = w3.eth.get_transaction_count(account.address)
         if "gas" not in tx:
             tx["gas"] = w3.eth.estimate_gas(tx)
-        if "gasPrice" not in tx:
-            tx["gasPrice"] = w3.eth.gas_price
+        if "gas_price" not in tx:
+            tx["gas_price"] = w3.eth.gas_price
 
         signed = account.sign_transaction(tx)
         tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
@@ -2267,7 +2267,7 @@ class PMClient:
             bytes.fromhex(ZERO_BYTES32[2:]),
             bytes.fromhex(condition_id if not condition_id.startswith("0x") else condition_id[2:]),
             index_sets,
-        ).build_transaction({"chainId": 137, "from": account.address})
+        ).build_transaction({"chain_id": 137, "from": account.address})
 
         return self._sign_and_send_tx(tx)
 
@@ -2294,7 +2294,7 @@ class PMClient:
         max_uint256 = 2**256 - 1
         tx = usdc.functions.approve(
             w3.to_checksum_address(spender), max_uint256
-        ).build_transaction({"chainId": 137, "from": account.address})
+        ).build_transaction({"chain_id": 137, "from": account.address})
         return self._sign_and_send_tx(tx)
 
     def _ensure_ctf_approval(self, operator: str) -> dict[str, Any] | None:
@@ -2317,7 +2317,7 @@ class PMClient:
 
         tx = ctf.functions.setApprovalForAll(
             w3.to_checksum_address(operator), True
-        ).build_transaction({"chainId": 137, "from": account.address})
+        ).build_transaction({"chain_id": 137, "from": account.address})
         return self._sign_and_send_tx(tx)
 
     def split_position(
@@ -2344,7 +2344,7 @@ class PMClient:
             tx = contract.functions.splitPosition(
                 self._to_condition_bytes(condition_id),
                 amount_base,
-            ).build_transaction({"chainId": 137, "from": account.address})
+            ).build_transaction({"chain_id": 137, "from": account.address})
         else:
             spender = CTF_ADDRESS
             self._ensure_usdc_approval(spender, amount_base)
@@ -2358,7 +2358,7 @@ class PMClient:
                 self._to_condition_bytes(condition_id),
                 BINARY_PARTITION,
                 amount_base,
-            ).build_transaction({"chainId": 137, "from": account.address})
+            ).build_transaction({"chain_id": 137, "from": account.address})
 
         result = self._sign_and_send_tx(tx)
         result["amount_usdc"] = amount_usdc
@@ -2388,7 +2388,7 @@ class PMClient:
             tx = contract.functions.mergePositions(
                 self._to_condition_bytes(condition_id),
                 amount_base,
-            ).build_transaction({"chainId": 137, "from": account.address})
+            ).build_transaction({"chain_id": 137, "from": account.address})
         else:
             ctf = w3.eth.contract(
                 address=w3.to_checksum_address(CTF_ADDRESS),
@@ -2400,7 +2400,7 @@ class PMClient:
                 self._to_condition_bytes(condition_id),
                 BINARY_PARTITION,
                 amount_base,
-            ).build_transaction({"chainId": 137, "from": account.address})
+            ).build_transaction({"chain_id": 137, "from": account.address})
 
         result = self._sign_and_send_tx(tx)
         result["amount_usdc"] = amount_usdc
