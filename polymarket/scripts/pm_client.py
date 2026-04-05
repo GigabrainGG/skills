@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["httpx", "pydantic", "py-clob-client", "eth-account>=0.10.0,<0.13", "web3>=6.0.0,<7"]
+# dependencies = ["httpx", "pydantic", "py-clob-client", "web3>=6.0.0,<7", "setuptools<74"]
 # ///
 """Polymarket CLI - thin argparse wrapper around PMClient.
 
