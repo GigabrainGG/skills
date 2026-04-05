@@ -2156,9 +2156,9 @@ class PMClient:
                 current_allowance = usdc.functions.allowance(account.address, target_cs).call()
                 if current_allowance < max_uint256:
                     tx = usdc.functions.approve(target_cs, max_uint256).build_transaction({
-                        "chain_id": 137, "from": account.address, "nonce": nonce,
+                        "from": account.address, "nonce": nonce,
                     })
-                    signed = account.sign_transaction(tx)
+                    signed = w3.eth.account.sign_transaction(tx, private_key=self._private_key)
                     tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
                     w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
                     nonce += 1
@@ -2173,9 +2173,9 @@ class PMClient:
                 is_approved = ctf.functions.isApprovedForAll(account.address, target_cs).call()
                 if not is_approved:
                     tx = ctf.functions.setApprovalForAll(target_cs, True).build_transaction({
-                        "chain_id": 137, "from": account.address, "nonce": nonce,
+                        "from": account.address, "nonce": nonce,
                     })
-                    signed = account.sign_transaction(tx)
+                    signed = w3.eth.account.sign_transaction(tx, private_key=self._private_key)
                     tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
                     w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
                     nonce += 1
@@ -2216,30 +2216,26 @@ class PMClient:
             )
 
     def _sign_and_send_tx(self, tx: dict) -> dict[str, Any]:
-        """Sign, send, and wait for a transaction receipt. Returns tx_hash, status, explorer_url."""
+        """Sign, send, and wait for a transaction receipt. Returns tx_hash, status, explorer_url.
+
+        Expects `tx` from `build_transaction({"from": addr})` — web3 v7
+        auto-fills nonce, gas, gasPrice/EIP-1559 fields, and chainId.
+        """
         from eth_account import Account
 
         self._require_web3()
         w3 = self._get_w3()
         account = Account.from_key(self._private_key)
 
-        tx["from"] = account.address
-        if "nonce" not in tx:
-            tx["nonce"] = w3.eth.get_transaction_count(account.address)
-        if "gas" not in tx:
-            tx["gas"] = w3.eth.estimate_gas(tx)
-        if "gas_price" not in tx:
-            tx["gas_price"] = w3.eth.gas_price
-
-        signed = account.sign_transaction(tx)
+        signed = w3.eth.account.sign_transaction(tx, private_key=self._private_key)
         tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
         receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
 
         return {
-            "tx_hash": receipt.transactionHash.hex(),
-            "status": "success" if receipt.status == 1 else "failed",
-            "gas_used": receipt.gasUsed,
-            "explorer_url": f"https://polygonscan.com/tx/0x{receipt.transactionHash.hex()}",
+            "tx_hash": receipt["transactionHash"].hex(),
+            "status": "success" if receipt["status"] == 1 else "failed",
+            "gas_used": receipt["gasUsed"],
+            "explorer_url": f"https://polygonscan.com/tx/0x{receipt['transactionHash'].hex()}",
         }
 
     def redeem_positions(
@@ -2267,7 +2263,7 @@ class PMClient:
             bytes.fromhex(ZERO_BYTES32[2:]),
             bytes.fromhex(condition_id if not condition_id.startswith("0x") else condition_id[2:]),
             index_sets,
-        ).build_transaction({"chain_id": 137, "from": account.address})
+        ).build_transaction({"from": account.address})
 
         return self._sign_and_send_tx(tx)
 
@@ -2294,7 +2290,7 @@ class PMClient:
         max_uint256 = 2**256 - 1
         tx = usdc.functions.approve(
             w3.to_checksum_address(spender), max_uint256
-        ).build_transaction({"chain_id": 137, "from": account.address})
+        ).build_transaction({"from": account.address})
         return self._sign_and_send_tx(tx)
 
     def _ensure_ctf_approval(self, operator: str) -> dict[str, Any] | None:
@@ -2317,7 +2313,7 @@ class PMClient:
 
         tx = ctf.functions.setApprovalForAll(
             w3.to_checksum_address(operator), True
-        ).build_transaction({"chain_id": 137, "from": account.address})
+        ).build_transaction({"from": account.address})
         return self._sign_and_send_tx(tx)
 
     def split_position(
@@ -2344,7 +2340,7 @@ class PMClient:
             tx = contract.functions.splitPosition(
                 self._to_condition_bytes(condition_id),
                 amount_base,
-            ).build_transaction({"chain_id": 137, "from": account.address})
+            ).build_transaction({"from": account.address})
         else:
             spender = CTF_ADDRESS
             self._ensure_usdc_approval(spender, amount_base)
@@ -2358,7 +2354,7 @@ class PMClient:
                 self._to_condition_bytes(condition_id),
                 BINARY_PARTITION,
                 amount_base,
-            ).build_transaction({"chain_id": 137, "from": account.address})
+            ).build_transaction({"from": account.address})
 
         result = self._sign_and_send_tx(tx)
         result["amount_usdc"] = amount_usdc
@@ -2388,7 +2384,7 @@ class PMClient:
             tx = contract.functions.mergePositions(
                 self._to_condition_bytes(condition_id),
                 amount_base,
-            ).build_transaction({"chain_id": 137, "from": account.address})
+            ).build_transaction({"from": account.address})
         else:
             ctf = w3.eth.contract(
                 address=w3.to_checksum_address(CTF_ADDRESS),
@@ -2400,7 +2396,7 @@ class PMClient:
                 self._to_condition_bytes(condition_id),
                 BINARY_PARTITION,
                 amount_base,
-            ).build_transaction({"chain_id": 137, "from": account.address})
+            ).build_transaction({"from": account.address})
 
         result = self._sign_and_send_tx(tx)
         result["amount_usdc"] = amount_usdc
