@@ -956,6 +956,51 @@ NEG_RISK_ADAPTER_ADDRESS = "0xC5d563A36AE78145C45a50134d48A1215220f80a"
 USDC_E_ADDRESS = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
 ZERO_BYTES32 = "0x" + "00" * 32
 BINARY_PARTITION = [1, 2]
+ZERO_ADDRESS = "0x" + "00" * 40
+
+# Gnosis Safe ABI (minimal for execTransaction)
+SAFE_ABI = [
+    {
+        "inputs": [
+            {"name": "to", "type": "address"},
+            {"name": "value", "type": "uint256"},
+            {"name": "data", "type": "bytes"},
+            {"name": "operation", "type": "uint8"},
+            {"name": "safeTxGas", "type": "uint256"},
+            {"name": "baseGas", "type": "uint256"},
+            {"name": "gasPrice", "type": "uint256"},
+            {"name": "gasToken", "type": "address"},
+            {"name": "refundReceiver", "type": "address"},
+            {"name": "signatures", "type": "bytes"},
+        ],
+        "name": "execTransaction",
+        "outputs": [{"name": "", "type": "bool"}],
+        "type": "function",
+    },
+    {
+        "inputs": [],
+        "name": "nonce",
+        "outputs": [{"name": "", "type": "uint256"}],
+        "type": "function",
+    },
+    {
+        "inputs": [
+            {"name": "to", "type": "address"},
+            {"name": "value", "type": "uint256"},
+            {"name": "data", "type": "bytes"},
+            {"name": "operation", "type": "uint8"},
+            {"name": "safeTxGas", "type": "uint256"},
+            {"name": "baseGas", "type": "uint256"},
+            {"name": "gasPrice", "type": "uint256"},
+            {"name": "gasToken", "type": "address"},
+            {"name": "refundReceiver", "type": "address"},
+            {"name": "_nonce", "type": "uint256"},
+        ],
+        "name": "getTransactionHash",
+        "outputs": [{"name": "", "type": "bytes32"}],
+        "type": "function",
+    },
+]
 
 # Minimal ABIs for CTF operations
 CTF_REDEEM_ABI = [
@@ -2242,12 +2287,111 @@ class PMClient:
             "explorer_url": f"https://polygonscan.com/tx/0x{receipt.transactionHash.hex()}",
         }
 
+    def _needs_safe_tx(self) -> bool:
+        """Check if we need to route through a Gnosis Safe proxy wallet.
+
+        Returns True when the wallet address (where tokens live) differs from
+        the signer address (EOA derived from the private key).
+        """
+        if not self._wallet_address or not self._signer_address:
+            return False
+        return self._wallet_address.lower() != self._signer_address.lower()
+
+    def _redeem_via_safe(
+        self,
+        condition_id: str,
+        index_sets: list[int],
+    ) -> dict[str, Any]:
+        """Redeem CTF positions by routing through a Gnosis Safe execTransaction.
+
+        The EOA signs a Safe meta-transaction that makes the Safe (which holds
+        the CTF tokens) call redeemPositions as msg.sender.
+        """
+        self._require_web3()
+        w3 = self._get_w3()
+        from eth_account import Account
+        from eth_keys import keys
+
+        account = Account.from_key(self._private_key)
+        safe_addr = w3.to_checksum_address(self._wallet_address)
+
+        # Build the inner redeemPositions call data
+        ctf = w3.eth.contract(
+            address=w3.to_checksum_address(CTF_ADDRESS),
+            abi=CTF_REDEEM_ABI,
+        )
+        condition_bytes = bytes.fromhex(
+            condition_id[2:] if condition_id.startswith("0x") else condition_id
+        )
+        redeem_data = ctf.functions.redeemPositions(
+            w3.to_checksum_address(USDC_E_ADDRESS),
+            bytes.fromhex(ZERO_BYTES32[2:]),
+            condition_bytes,
+            index_sets,
+        )._encode_transaction_data()
+
+        # Set up Safe contract
+        safe = w3.eth.contract(address=safe_addr, abi=SAFE_ABI)
+        safe_nonce = safe.functions.nonce().call()
+
+        # Safe tx parameters (all zeros except to/data — no refund, no gas token)
+        to = w3.to_checksum_address(CTF_ADDRESS)
+        value = 0
+        operation = 0  # CALL
+        safe_tx_gas = 0
+        base_gas = 0
+        gas_price_param = 0
+        gas_token = w3.to_checksum_address(ZERO_ADDRESS)
+        refund_receiver = w3.to_checksum_address(ZERO_ADDRESS)
+
+        # Get Safe tx hash and sign it
+        safe_tx_hash = safe.functions.getTransactionHash(
+            to, value, redeem_data, operation,
+            safe_tx_gas, base_gas, gas_price_param,
+            gas_token, refund_receiver, safe_nonce,
+        ).call()
+
+        # Sign with eth_keys (Safe expects raw ECDSA, v = 27/28)
+        pk = keys.PrivateKey(account.key)
+        sig_obj = pk.sign_msg_hash(safe_tx_hash)
+        r = sig_obj.r.to_bytes(32, byteorder="big")
+        s = sig_obj.s.to_bytes(32, byteorder="big")
+        v = (sig_obj.v + 27).to_bytes(1, byteorder="big")
+        signature = r + s + v
+
+        # Build the outer execTransaction call from the EOA
+        tx = safe.functions.execTransaction(
+            to, value, redeem_data, operation,
+            safe_tx_gas, base_gas, gas_price_param,
+            gas_token, refund_receiver, signature,
+        ).build_transaction({
+            "chainId": 137,
+            "from": account.address,
+        })
+
+        return self._sign_and_send_tx(tx)
+
     def redeem_positions(
         self,
         condition_id: str,
         index_sets: list[int] | None = None,
     ) -> dict[str, Any]:
-        """Redeem resolved CTF positions back to USDC.e."""
+        """Redeem resolved CTF positions back to USDC.e.
+
+        Auto-detects whether tokens are in a Gnosis Safe proxy wallet
+        (wallet_address != signer_address) and routes accordingly.
+        """
+        if index_sets is None:
+            index_sets = BINARY_PARTITION
+
+        if self._needs_safe_tx():
+            logger.info(
+                "Redeeming via Gnosis Safe proxy %s (signer: %s)",
+                self._wallet_address, self._signer_address,
+            )
+            return self._redeem_via_safe(condition_id, index_sets)
+
+        # Direct EOA redemption
         self._require_web3()
         w3 = self._get_w3()
         from eth_account import Account
@@ -2258,9 +2402,6 @@ class PMClient:
             address=w3.to_checksum_address(CTF_ADDRESS),
             abi=CTF_REDEEM_ABI,
         )
-
-        if index_sets is None:
-            index_sets = BINARY_PARTITION
 
         tx = ctf.functions.redeemPositions(
             w3.to_checksum_address(USDC_E_ADDRESS),
