@@ -2204,7 +2204,10 @@ class PMClient:
         """Lazy Web3 instance for Polygon with POA middleware."""
         if not hasattr(self, "_w3") or self._w3 is None:
             from web3 import Web3
-            from web3.middleware import ExtraDataToPOAMiddleware
+            try:
+                from web3.middleware import ExtraDataToPOAMiddleware
+            except ImportError:
+                from web3.middleware import geth_poa_middleware as ExtraDataToPOAMiddleware
 
             self._w3 = Web3(Web3.HTTPProvider(POLYGON_RPC_URL))
             self._w3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
@@ -2218,20 +2221,16 @@ class PMClient:
             )
 
     def _sign_and_send_tx(self, tx: dict) -> dict[str, Any]:
-        """Sign, send, and wait for a transaction receipt. Returns tx_hash, status, explorer_url."""
+        """Sign, send, and wait for a transaction receipt.
+
+        Expects tx from build_transaction({"chainId": 137, "from": addr, "nonce": n}).
+        build_transaction auto-fills gas and EIP-1559 fee params.
+        """
         from eth_account import Account
 
         self._require_web3()
         w3 = self._get_w3()
         account = Account.from_key(self._private_key)
-
-        # Fill in nonce/gas/gasPrice if build_transaction didn't set them
-        if "nonce" not in tx:
-            tx["nonce"] = w3.eth.get_transaction_count(account.address)
-        if "gas" not in tx:
-            tx["gas"] = w3.eth.estimate_gas(tx)
-        if "gasPrice" not in tx and "maxFeePerGas" not in tx:
-            tx["gasPrice"] = w3.eth.gas_price
 
         signed = account.sign_transaction(tx)
         raw = getattr(signed, "raw_transaction", None) or signed.rawTransaction
@@ -2270,7 +2269,7 @@ class PMClient:
             bytes.fromhex(ZERO_BYTES32[2:]),
             bytes.fromhex(condition_id if not condition_id.startswith("0x") else condition_id[2:]),
             index_sets,
-        ).build_transaction({"chainId": 137, "from": account.address})
+        ).build_transaction({"chainId": 137, "from": account.address, "nonce": w3.eth.get_transaction_count(account.address)})
 
         return self._sign_and_send_tx(tx)
 
@@ -2297,7 +2296,7 @@ class PMClient:
         max_uint256 = 2**256 - 1
         tx = usdc.functions.approve(
             w3.to_checksum_address(spender), max_uint256
-        ).build_transaction({"chainId": 137, "from": account.address})
+        ).build_transaction({"chainId": 137, "from": account.address, "nonce": w3.eth.get_transaction_count(account.address)})
         return self._sign_and_send_tx(tx)
 
     def _ensure_ctf_approval(self, operator: str) -> dict[str, Any] | None:
@@ -2320,7 +2319,7 @@ class PMClient:
 
         tx = ctf.functions.setApprovalForAll(
             w3.to_checksum_address(operator), True
-        ).build_transaction({"chainId": 137, "from": account.address})
+        ).build_transaction({"chainId": 137, "from": account.address, "nonce": w3.eth.get_transaction_count(account.address)})
         return self._sign_and_send_tx(tx)
 
     def split_position(
@@ -2347,7 +2346,7 @@ class PMClient:
             tx = contract.functions.splitPosition(
                 self._to_condition_bytes(condition_id),
                 amount_base,
-            ).build_transaction({"chainId": 137, "from": account.address})
+            ).build_transaction({"chainId": 137, "from": account.address, "nonce": w3.eth.get_transaction_count(account.address)})
         else:
             spender = CTF_ADDRESS
             self._ensure_usdc_approval(spender, amount_base)
@@ -2361,7 +2360,7 @@ class PMClient:
                 self._to_condition_bytes(condition_id),
                 BINARY_PARTITION,
                 amount_base,
-            ).build_transaction({"chainId": 137, "from": account.address})
+            ).build_transaction({"chainId": 137, "from": account.address, "nonce": w3.eth.get_transaction_count(account.address)})
 
         result = self._sign_and_send_tx(tx)
         result["amount_usdc"] = amount_usdc
@@ -2391,7 +2390,7 @@ class PMClient:
             tx = contract.functions.mergePositions(
                 self._to_condition_bytes(condition_id),
                 amount_base,
-            ).build_transaction({"chainId": 137, "from": account.address})
+            ).build_transaction({"chainId": 137, "from": account.address, "nonce": w3.eth.get_transaction_count(account.address)})
         else:
             ctf = w3.eth.contract(
                 address=w3.to_checksum_address(CTF_ADDRESS),
@@ -2403,7 +2402,7 @@ class PMClient:
                 self._to_condition_bytes(condition_id),
                 BINARY_PARTITION,
                 amount_base,
-            ).build_transaction({"chainId": 137, "from": account.address})
+            ).build_transaction({"chainId": 137, "from": account.address, "nonce": w3.eth.get_transaction_count(account.address)})
 
         result = self._sign_and_send_tx(tx)
         result["amount_usdc"] = amount_usdc
