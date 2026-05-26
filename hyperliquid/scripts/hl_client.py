@@ -26,14 +26,19 @@ def _get_services(require_address: bool = False):
     """Create HLServices from environment variables."""
     from hl_services import HLServices
 
-    account_address = os.environ.get("EVM_WALLET_ADDRESS", "")
-    private_key = os.environ.get("EVM_PRIVATE_KEY") or None  # None = read-only
+    hyperliquid_account_address = os.environ.get("HYPERLIQUID_ACCOUNT_ADDRESS")
+    if hyperliquid_account_address:
+        account_address = hyperliquid_account_address
+        private_key = os.environ.get("HYPERLIQUID_PRIVATE_KEY") or None
+    else:
+        account_address = os.environ.get("EVM_WALLET_ADDRESS", "")
+        private_key = os.environ.get("EVM_PRIVATE_KEY") or None
     testnet = os.environ.get("HL_TESTNET", "").lower() in ("true", "1", "yes")
     builder_address = os.environ.get("HL_BUILDER_ADDRESS")
     builder_fee_bps = os.environ.get("HL_BUILDER_FEE_BPS")
 
     if require_address and not account_address:
-        _out({"success": False, "error": "EVM_WALLET_ADDRESS must be set. Run 'config' to check."})
+        _out({"success": False, "error": "HYPERLIQUID_ACCOUNT_ADDRESS or EVM_WALLET_ADDRESS must be set. Run 'config' to check."})
         sys.exit(1)
 
     return HLServices(
