@@ -29,13 +29,26 @@ All commands return JSON to stdout with a `success` field.
 
 | Variable | Required | Description |
 |---|---|---|
-| `EVM_WALLET_ADDRESS` | For account data | HyperLiquid account address (EVM address from Privy) |
-| `EVM_PRIVATE_KEY` | For trading | Signing key — enables order placement and transfers |
+| `HYPERLIQUID_ACCOUNT_ADDRESS` | For account data | Selected HyperLiquid-capable account address |
+| `HYPERLIQUID_PRIVATE_KEY` | For trading | Approved HyperLiquid API/agent wallet key — enables order placement and transfers |
+| `HYPERLIQUID_ACCOUNT_SOURCE` | No | `agent_wallet` or `user_integration` |
+| `HYPERLIQUID_INTEGRATION_ID` | No | Integration id when using a connected HyperLiquid account |
+| `EVM_WALLET_ADDRESS` | Fallback | Dedicated EVM wallet address, used when no `HYPERLIQUID_ACCOUNT_ADDRESS` is set |
+| `EVM_PRIVATE_KEY` | Fallback | Dedicated EVM signing key, used when no `HYPERLIQUID_PRIVATE_KEY` is set |
 | `HL_BUILDER_ADDRESS` | No | Builder fee recipient (default: GigaBrain) |
 | `HL_BUILDER_FEE_BPS` | No | Builder fee in basis points (default: 5) |
 | `HL_TESTNET` | No | Set `true` for testnet |
 
-Without `EVM_PRIVATE_KEY`, all read commands work but trading commands return an error.
+The platform injects `HYPERLIQUID_*` from the agent's selected connected account.
+For a dedicated agent EVM wallet, `HYPERLIQUID_ACCOUNT_ADDRESS` is the master
+account address and `HYPERLIQUID_PRIVATE_KEY` is the approved HyperLiquid
+API/agent wallet key. Do not substitute the master EVM private key when an
+approved API/agent key is missing; the skill should remain read-only until the
+wallet is activated. If the selected account is Solana, HyperLiquid account data
+is intentionally unset and trading commands return a clear configuration error.
+
+Without `HYPERLIQUID_PRIVATE_KEY` or fallback `EVM_PRIVATE_KEY`, all read commands
+work but trading commands return an error.
 
 ## Coin Names
 
