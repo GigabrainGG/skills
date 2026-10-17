@@ -1,3 +1,7 @@
+# 0.2.0-rc.2
+
+Setup now verifies the same six-section v2 contract as the briefing skills, and upgrades older installations while preserving OAuth.
+
 # 0.2.0-rc.1
 
 Universal six-section policy context guidance, truthful partial coverage, and explicit separation of source evidence from policy heuristics. Compatible with v1 during coordinated rollout.
