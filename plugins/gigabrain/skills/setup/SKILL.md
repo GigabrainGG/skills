@@ -6,7 +6,7 @@ license: MIT
 
 # Connect Gigabrain
 
-This package is **Gigabrain**, version **0.1.0-rc.1**, for **https://api.gigabrain.gg/mcp**.
+This package is **Gigabrain**, version **0.2.0-rc.1**, for **https://api.gigabrain.gg/mcp**.
 Prepared for production; not activated. Do not attempt sign-in until the official Connect page enables setup.
 
 Read [connection instructions](references/connection.md) for the actual host before changing configuration. Preserve existing installations; inspect the configured endpoint and package version first. Reuse an equivalent connection rather than creating duplicates. Do not replace a legacy Brain research or trading integration silently.

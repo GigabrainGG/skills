@@ -6,8 +6,8 @@ license: MIT
 
 # Connect Gigabrain
 
-This package is **Gigabrain staging**, version **0.1.0-rc.1**, for **https://staging-api.gigabrain.gg/mcp**.
-Staging pilot. OAuth is available; live context remains gated while the market-data subscription is renewed.
+This package is **Gigabrain staging**, version **0.2.0-rc.1**, for **https://staging-api.gigabrain.gg/mcp**.
+Staging pilot. Universal policy context returns healthy sections even when individual data providers are unavailable.
 
 Read [connection instructions](references/connection.md) for the actual host before changing configuration. Preserve existing installations; inspect the configured endpoint and package version first. Reuse an equivalent connection rather than creating duplicates. Do not replace a legacy Brain research or trading integration silently.
 
