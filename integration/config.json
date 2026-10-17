@@ -1,0 +1,23 @@
+{
+  "version": "0.1.0-rc.1",
+  "marketplace": "gigabrain",
+  "repository": "https://github.com/GigabrainGG/skills",
+  "environments": {
+    "production": {
+      "name": "gigabrain",
+      "label": "Gigabrain",
+      "origin": "https://gigabrain.gg",
+      "mcp": "https://api.gigabrain.gg/mcp",
+      "claudeClientId": "gigabrain-claude",
+      "availability": "Prepared for production; not activated. Do not attempt sign-in until the official Connect page enables setup."
+    },
+    "staging": {
+      "name": "gigabrain-staging",
+      "label": "Gigabrain staging",
+      "origin": "https://staging.gigabrain.gg",
+      "mcp": "https://staging-api.gigabrain.gg/mcp",
+      "claudeClientId": "gigabrain-claude-staging",
+      "availability": "Staging pilot. OAuth is available; live context remains gated while the market-data subscription is renewed."
+    }
+  }
+}

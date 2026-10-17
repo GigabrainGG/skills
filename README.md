@@ -2,6 +2,10 @@
 
 Open-source skills for [GigaBrain](https://gigabrain.gg) agents. Compatible with the [Agent Skills](https://agentskills.io) open standard.
 
+## New read-only OAuth integration
+
+The canonical market-context plugin source is [integration/](integration/README.md). It generates Codex/Agent Plugins and Claude packages from the same setup, asset briefing and trade-thesis review skills. Core MCP context requires no AI-provider connection in Gigabrain. Start from the [Connect page](https://gigabrain.gg/connect); the release candidate is a staging pilot, with live context awaiting data-plan renewal. The legacy skills below keep their existing paths and are not bundled into the new package.
+
 ## Skills
 
 | Skill | Description |
