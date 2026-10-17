@@ -1,0 +1,21 @@
+{
+  "name": "gigabrain",
+  "owner": {
+    "name": "Gigabrain"
+  },
+  "metadata": {
+    "description": "Read-only market context with Gigabrain OAuth"
+  },
+  "plugins": [
+    {
+      "name": "gigabrain",
+      "source": "./plugins/gigabrain",
+      "description": "Gigabrain read-only BTC/ETH context with browser OAuth. No Gigabrain AI-provider setup."
+    },
+    {
+      "name": "gigabrain-staging",
+      "source": "./plugins/gigabrain-staging",
+      "description": "Gigabrain staging read-only BTC/ETH context with browser OAuth. No Gigabrain AI-provider setup."
+    }
+  ]
+}

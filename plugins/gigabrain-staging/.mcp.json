@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "gigabrain-staging": {
+      "type": "http",
+      "url": "https://staging-api.gigabrain.gg/mcp",
+      "oauth": {
+        "clientId": "gigabrain-claude-staging"
+      }
+    }
+  }
+}

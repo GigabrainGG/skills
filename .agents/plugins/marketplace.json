@@ -1,0 +1,32 @@
+{
+  "name": "gigabrain",
+  "interface": {
+    "displayName": "Gigabrain"
+  },
+  "plugins": [
+    {
+      "name": "gigabrain",
+      "source": {
+        "source": "local",
+        "path": "./plugins/gigabrain"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    },
+    {
+      "name": "gigabrain-staging",
+      "source": {
+        "source": "local",
+        "path": "./plugins/gigabrain-staging"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+The unmodified plugin.schema.json and mcp.schema.json are from https://agent-plugins.org/schemas/1.0.0/ (retrieved 2026-10-17), maintained by Agent Plugins contributors and licensed under Apache-2.0; see LICENSE. They are excluded from the MIT license of the Gigabrain-authored integration.
