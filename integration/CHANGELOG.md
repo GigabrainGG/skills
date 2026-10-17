@@ -1,3 +1,7 @@
+# 0.2.0-rc.1
+
+Universal six-section policy context guidance, truthful partial coverage, and explicit separation of source evidence from policy heuristics. Compatible with v1 during coordinated rollout.
+
 # Changelog
 
 ## 0.1.0-rc.1 — 2026-10-17

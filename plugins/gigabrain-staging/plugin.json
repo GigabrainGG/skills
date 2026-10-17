@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "gigabrain-staging",
-  "version": "0.1.0-rc.1",
+  "version": "0.2.0-rc.1",
   "description": "Gigabrain staging read-only BTC/ETH context with browser OAuth. No Gigabrain AI-provider setup.",
   "author": {
     "name": "Gigabrain",

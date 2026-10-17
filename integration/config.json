@@ -1,5 +1,5 @@
 {
-  "version": "0.1.0-rc.1",
+  "version": "0.2.0-rc.1",
   "marketplace": "gigabrain",
   "repository": "https://github.com/GigabrainGG/skills",
   "environments": {
@@ -17,7 +17,7 @@
       "origin": "https://staging.gigabrain.gg",
       "mcp": "https://staging-api.gigabrain.gg/mcp",
       "claudeClientId": "gigabrain-claude-staging",
-      "availability": "Staging pilot. OAuth is available; live context remains gated while the market-data subscription is renewed."
+      "availability": "Staging pilot. Universal policy context returns healthy sections even when individual data providers are unavailable."
     }
   }
 }
