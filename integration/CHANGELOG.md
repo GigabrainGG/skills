@@ -1,3 +1,7 @@
+# 0.3.0-rc.1
+
+Public asset-context.v3: optional supported sections and fields, coverage, selected evidence, and material caveats. No raw provider payloads or policy internals. Setup requires a real v3 tool response; briefing/thesis workflows interpret omissions, pattern confirmation, sentiment and narratives without inventing missing evidence.
+
 # 0.2.0-rc.2
 
 Setup now verifies the same six-section v2 contract as the briefing skills, and upgrades older installations while preserving OAuth.

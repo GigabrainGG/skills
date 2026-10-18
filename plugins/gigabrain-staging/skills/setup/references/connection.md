@@ -1,6 +1,6 @@
 # Host connection routes
 
-Package: `gigabrain-staging@gigabrain`, version `0.2.0-rc.2`.
+Package: `gigabrain-staging@gigabrain`, version `0.3.0-rc.1`.
 Endpoint: `https://staging-api.gigabrain.gg/mcp` (Streamable HTTP).
 Account: https://staging.gigabrain.gg/connect?tab=connected.
 Scopes: `account:read intelligence:read offline_access`.
