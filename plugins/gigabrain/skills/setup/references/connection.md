@@ -1,6 +1,6 @@
 # Host connection routes
 
-Package: `gigabrain@gigabrain`, version `0.3.0-rc.1`.
+Package: `gigabrain@gigabrain`, version `0.3.1-rc.1`.
 Endpoint: `https://api.gigabrain.gg/mcp` (Streamable HTTP).
 Account: https://gigabrain.gg/connect?tab=connected.
 Scopes: `account:read intelligence:read offline_access`.

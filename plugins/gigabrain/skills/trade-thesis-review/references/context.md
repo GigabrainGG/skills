@@ -22,3 +22,9 @@ Percent values use percent units: 2.1 means 2.1%, not 210%. Basis points are exp
 ## Failures and compatibility
 
 v1/v2 are outdated internal contracts, not acceptable public output. Report a contract mismatch instead of interpreting or requesting raw internal payloads. Never request hidden fields, provider payloads or internal policy logic as a workaround. If no section is usable, the call fails and the reservation is refunded. MCP failures use `isError` with JSON status details. Authentication, membership and quota failures do not authorize automatic retries or hosted Research fallback. Reuse `request_id` only for the same request; duplicates are rejected rather than replayed.
+
+## Account access
+
+`get_connection_status` is free of context quota and returns `connected` plus `membership`. `hasPaidSubscription` describes an active, paid-through subscription; `subscriptionStatus` is the billing lifecycle status and does not alone establish access. `source` identifies subscription, holder, whitelist or none. `eligible` means an entitlement exists; `enabled` means access is ready now. Use `access` (`ready`, `membership_required`, `allowance_exhausted`, `not_enabled`, `temporarily_unavailable`) to decide the next step. Null `hasPaidSubscription` means unknown, not unpaid. `requestsRemaining` is zero when context cannot be used.
+
+For unpaid, ineligible accounts, show the returned `upgradeUrl` and clearly state that market intelligence requires membership even though OAuth succeeded. The link opens account plan options; it is not a claim that checkout is enabled. `MEMBERSHIP_REQUIRED` tool errors carry the same guidance under `error.membership`, with status 403 and `isError: true`. No data or quota is consumed by this denial. Eligible holders do not need a paid subscription. Preserve the connection and recheck status after activation.
