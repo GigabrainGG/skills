@@ -1,6 +1,6 @@
 {
   "name": "gigabrain",
-  "version": "0.3.0-rc.1",
+  "version": "0.3.1-rc.1",
   "description": "Gigabrain read-only BTC/ETH context with browser OAuth. No Gigabrain AI-provider setup.",
   "author": {
     "name": "Gigabrain",
