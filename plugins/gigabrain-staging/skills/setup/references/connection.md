@@ -1,10 +1,10 @@
 # Host connection routes
 
-Package: `gigabrain-staging@gigabrain`, version `0.1.0-rc.1`.
+Package: `gigabrain-staging@gigabrain`, version `0.3.1`.
 Endpoint: `https://staging-api.gigabrain.gg/mcp` (Streamable HTTP).
 Account: https://staging.gigabrain.gg/connect?tab=connected.
 Scopes: `account:read intelligence:read offline_access`.
-Staging pilot. OAuth is available; live context remains gated while the market-data subscription is renewed.
+Staging pilot. Universal policy context returns healthy sections even when individual data providers are unavailable.
 
 Use the immutable revision in the official guide at https://staging.gigabrain.gg/connect/setup when installing. Review the package source before installation. Commands below assume the current host exposes those commands in `--help`; plugin commands and OAuth behavior differ across host versions.
 
