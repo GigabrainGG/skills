@@ -1,3 +1,8 @@
+# 0.3.1
+
+- Activate the production OAuth plugin with the public v3 contract and explicit membership guidance.
+- Keep unavailable sections omitted without blocking healthy context; no AI-provider setup is required.
+
 # 0.3.1-rc.1
 
 - Distinguish OAuth connection, active paid subscription, wallet eligibility and usable context access.

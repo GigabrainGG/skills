@@ -1,10 +1,10 @@
 # Host connection routes
 
-Package: `gigabrain@gigabrain`, version `0.3.1-rc.1`.
+Package: `gigabrain@gigabrain`, version `0.3.1`.
 Endpoint: `https://api.gigabrain.gg/mcp` (Streamable HTTP).
 Account: https://gigabrain.gg/connect?tab=connected.
 Scopes: `account:read intelligence:read offline_access`.
-Prepared for production; not activated. Do not attempt sign-in until the official Connect page enables setup.
+Production. Connect with browser OAuth, then check membership before requesting context. Available sections are returned independently; unsupported data is omitted.
 
 Use the immutable revision in the official guide at https://gigabrain.gg/connect/setup when installing. Review the package source before installation. Commands below assume the current host exposes those commands in `--help`; plugin commands and OAuth behavior differ across host versions.
 
