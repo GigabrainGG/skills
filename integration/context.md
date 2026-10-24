@@ -4,14 +4,7 @@
 
 ## Account access
 
-Call `get_connection_status` before the first context call in a conversation. `connected: true` only means OAuth works. Decide the next step from `membership.access`:
-
-- `ready`: continue. If `tier` is `free`, the account has 50 context requests per UTC calendar month; do not call that a paid subscription or wallet membership. If `hasPaidSubscription` is false and `tier` is not `free`, a qualifying wallet grants access; do not upsell.
-- `membership_required`: tell the user they do not have an active paid subscription or qualifying wallet membership, so market context is locked even though Gigabrain is connected. Show `membership.upgradeUrl` (fallback: @ORIGIN@/profile?tab=plan) as "View membership options" and stop without calling context. The link opens plan options; it does not mean checkout is open.
-- `allowance_exhausted`: explain the reset. For `free`, also offer the upgrade link; members wait for the reset, since another membership adds no quota.
-- `not_enabled`: explain the rollout restriction. `temporarily_unavailable`, or a null `hasPaidSubscription`: status is unknown; do not call the user unpaid or suggest paying as a fix.
-
-A tool error with `error.code: MEMBERSHIP_REQUIRED` (403) carries the same guidance under `error.membership`; show its upgrade link and stop. After the user activates membership, recheck status on the same connection; no reinstall is needed. Never purchase membership.
+Call `get_connection_status` before the first context call in a conversation. `connected: true` only means OAuth works. Show the user `membership.message`, which the server words for their exact state (free tier, paid, wallet, locked, exhausted, rollout or unavailable); add `membership.upgradeUrl` as "View membership options" when it is present. Request context only when `membership.access` is `ready`; otherwise stop there. A 403 `MEMBERSHIP_REQUIRED` tool error carries the same fields under `error.membership`. After the user activates membership, recheck status on the same connection; no reinstall is needed. Never purchase membership.
 
 ## asset-context.v3
 
