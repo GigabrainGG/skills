@@ -3,7 +3,7 @@ on:
   pull_request:
     paths: ['integration/**', 'plugins/**', '.agents/plugins/**', '.claude-plugin/**', '.github/workflows/integration.yml']
   push:
-    branches: [main]
+    branches: [main, staging]
     paths: ['integration/**', 'plugins/**', '.agents/plugins/**', '.claude-plugin/**', '.github/workflows/integration.yml']
 permissions:
   contents: read
@@ -22,4 +22,4 @@ jobs:
         with:
           node-version: '22'
       - run: npm install --global @anthropic-ai/claude-code@2.1.112
-      - run: claude plugin validate plugins/gigabrain && claude plugin validate plugins/gigabrain-staging && claude plugin validate .claude-plugin/marketplace.json
+      - run: for plugin in plugins/*/; do claude plugin validate "$plugin"; done && claude plugin validate .claude-plugin/marketplace.json

@@ -1,5 +1,5 @@
 {
-  "version": "0.3.1",
+  "version": "0.3.2",
   "marketplace": "gigabrain",
   "repository": "https://github.com/GigabrainGG/skills",
   "environments": {
@@ -9,15 +9,7 @@
       "origin": "https://gigabrain.gg",
       "mcp": "https://api.gigabrain.gg/mcp",
       "claudeClientId": "gigabrain-claude",
-      "availability": "Production. Connect with browser OAuth, then check membership before requesting context. Available sections are returned independently; unsupported data is omitted."
-    },
-    "staging": {
-      "name": "gigabrain-staging",
-      "label": "Gigabrain staging",
-      "origin": "https://staging.gigabrain.gg",
-      "mcp": "https://staging-api.gigabrain.gg/mcp",
-      "claudeClientId": "gigabrain-claude-staging",
-      "availability": "Staging pilot. Universal policy context returns healthy sections even when individual data providers are unavailable."
+      "availability": "Sections are returned independently; unsupported data is omitted."
     }
   }
 }

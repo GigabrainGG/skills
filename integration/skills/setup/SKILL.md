@@ -9,30 +9,26 @@ license: MIT
 This package is **@LABEL@**, version **@VERSION@**, for **@MCP_URL@**.
 @AVAILABILITY@
 
-Read [connection instructions](references/connection.md) for the actual host before changing configuration. Preserve existing installations; inspect the configured endpoint and package version first. Update an older package to the reviewed pinned revision using the host's supported updater or reinstall, while preserving its OAuth connection and unrelated configuration. Verify the loaded skills describe the public v3 contract and its six supported sections. Reuse an equivalent connection rather than creating duplicates. Do not replace a legacy Brain research or trading integration silently.
+The package is instructions plus a hosted MCP connection; nothing runs locally. Access needs Gigabrain OAuth, an eligible account and available allowance. No API key is involved, and your own model does the reasoning.
 
-The package contains instructions and a hosted MCP connection, with no local service or inference runtime. Core context needs Gigabrain OAuth, active account entitlement and available allowance. It does **not** require an API key or an AI provider connected in Gigabrain. The user's host agent reasons over the returned evidence using its own model. Hosted Research is a separate product path; do not invoke it as a fallback.
+Read [connection instructions](references/connection.md) for the actual host before changing configuration. Inspect any existing installation's endpoint and version first. Reuse an equivalent connection instead of creating a duplicate, and update an older package through the host's updater while preserving its OAuth connection and unrelated configuration.
 
 ## Connect and verify
 
-1. Identify the actual host and installed version. Use its supported plugin installer, or its documented skill plus remote MCP setup if plugins are unavailable. A generic hosted chat may not install local packages. Explain unsupported capabilities instead of inventing commands.
-2. Let the host run OAuth in the browser, requesting `account:read intelligence:read offline_access`. The user signs in and approves the displayed access. The host stores and refreshes tokens. Never request, read, copy or print access/refresh tokens, browser cookies or unrelated credentials. Client IDs are public metadata, not secrets.
-3. Discover the configured tools; host prefixes vary. Call `get_connection_status` on this package's server. Report authentication, paid subscription and context access separately. `connected: true` only means OAuth works. Read `membership.hasPaidSubscription`, `subscriptionStatus`, `source`, `access` and `message`; never infer subscription from a connected tool or a quota number.
-   - `access: membership_required`: explicitly say “You do not have an active paid subscription or qualifying wallet membership. Gigabrain is connected, but market intelligence is locked.” Show the returned `upgradeUrl` (fallback: @ORIGIN@/profile?tab=plan) as “View membership options.” Stop before the context check. Do not purchase, reconnect, ask for an AI key or imply checkout is open.
-   - `access: ready` with `hasPaidSubscription: false`: explain that wallet membership grants access without a paid subscription. Do not upsell or block a qualifying holder.
-   - `allowance_exhausted`: explain the limit/reset; buying another membership does not add quota. `not_enabled`: explain the rollout restriction. `temporarily_unavailable` or null/unknown subscription status: do not label the user unpaid or recommend payment as a fix. Stop at that stage.
-   - Once the user activates membership, recheck status on the same connection; no reinstall or new OAuth consent is needed unless authorization itself expired or was revoked. If an older response lacks these explicit fields, do not claim membership is verified.
-4. Only when `membership.access` is `ready`, explain that one context check uses one shared Gigabrain request, with no Gigabrain model-provider charge. If setup/verification is already authorized, call `get_asset_context` once with `{"asset":"BTC"}`. Otherwise ask before consuming an allowance. Do not create a subscription or change membership.
-5. Require a successful `asset-context.v3` result with `data_mode: live`, the requested asset, and at least one useful section. Check that `coverage.included` matches the returned sections. The six supported sections are market, technicals, positioning, fundamentals, catalysts and macro; unavailable sections and fields are omitted. Explain useful coverage and material caveats without requesting hidden providers, raw data or internal logic. Missing fields do not mean zero or neutral. v1/v2 are outdated contracts, not successful public-context verification. Only then report context ready. If the tool is absent, denied, gated or unavailable, report that stage and stop; installation and OAuth alone do not prove a usable market response.
+1. Identify the host and its version. Use its plugin installer, or its documented skill plus remote MCP setup if plugins are unavailable. If the host cannot install packages, explain that instead of inventing commands.
+2. Let the host run browser OAuth, requesting `account:read intelligence:read offline_access`. The user signs in and approves access; the host stores and refreshes tokens. Never request, read, copy or print tokens, cookies or other credentials. Client IDs are public metadata, not secrets.
+3. Discover the tools (host prefixes vary) and call `get_connection_status`. Report authentication, membership and context access separately, following the account access rules in [the context contract](references/context.md). Stop here unless `membership.access` is `ready`.
+4. Explain that one context check uses one request from the shared allowance. If the user's setup request already authorizes verification, call `get_asset_context` once with `{"asset":"BTC"}`; otherwise ask first.
+5. Require a successful `asset-context.v3` response with `data_mode: live`, BTC, at least one useful section and `coverage.included` matching the returned sections. Summarize which of the six sections (market, technicals, positioning, fundamentals, catalysts, macro) came back and any material caveats. Only then report that context is ready. Installation and OAuth alone do not prove usable context.
 
 ## Recovery
 
-- Canceled browser consent: leave the installation intact; resume native sign-in when requested.
-- Expired/revoked authorization or 401: use native reconnect. An old account-only grant needs fresh consent for `intelligence:read`; refresh cannot add permissions.
-- 403 with `error.code: MEMBERSHIP_REQUIRED`: use `error.membership` and the unpaid-account wording above; show its upgrade link and stop. Other 403 errors may be scope or rollout restrictions; do not describe every denial as an unpaid subscription. Scope errors need fresh consent.
-- 429: show the account limit/reset or Retry-After; do not loop or switch accounts/keys to evade limits.
-- 409: this request ID was already admitted. Do not resubmit with a new ID automatically or claim a replayed result.
-- 503 or unusable evidence: report context unavailable; do not fabricate a briefing, switch to hosted Research, or mark setup complete. A data-service outage is not a missing AI-provider connection.
-- Manage/revoke access at @ORIGIN@/connect?tab=connected. Uninstalling a plugin and revoking its OAuth grant are separate actions; offer the appropriate one for the user's request.
+- Canceled browser consent: leave the installation intact; resume sign-in when the user asks.
+- 401 or expired/revoked authorization: use the host's reconnect. An old grant without `intelligence:read` needs fresh consent; refresh cannot add scopes.
+- 403 `MEMBERSHIP_REQUIRED`: follow the membership guidance and stop. Other 403s may be scope or rollout restrictions; do not call every denial an unpaid account.
+- 429: show the limit and reset or Retry-After; do not loop or switch accounts.
+- 409: this request ID was already admitted; do not resubmit with a new ID automatically.
+- 503 or no usable evidence: report context unavailable and do not mark setup complete.
+- Manage or revoke access at @ORIGIN@/connect?tab=connected. Uninstalling the plugin and revoking its OAuth grant are separate actions.
 
-No trading, wallet signing, transfers, account creation, background jobs or recurring requests are part of this setup.
+Setup includes no trading, wallet signing, transfers, account creation or recurring jobs.
