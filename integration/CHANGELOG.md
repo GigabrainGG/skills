@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.3
+
+- Relay the server's `membership.message` instead of re-deriving each access state in the skills.
+- Explain the local `127.0.0.1` OAuth callback that native hosts use, and how to recover when it fails to load.
+
 ## 0.3.2
 
 - Ship only the production package from `main`; the staging package moves to the `staging` branch.
