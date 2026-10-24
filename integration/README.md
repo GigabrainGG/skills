@@ -4,7 +4,7 @@ Canonical source for the Gigabrain plugin: setup, asset briefing and trade-thesi
 
 ## Install
 
-Use the [Connect page](https://gigabrain.gg/connect). Its setup guide pins an immutable revision of this repository and installs `gigabrain@gigabrain`. Version 0.3.2 targets the public `asset-context.v3` contract.
+Use the [Connect page](https://gigabrain.gg/connect). Its setup guide installs `gigabrain@gigabrain` from `main`. The package targets the public `asset-context.v3` contract.
 
 ## Build and validate
 
@@ -19,8 +19,8 @@ python3 -m unittest discover -s integration/tests -v
 
 ## Releases and updates
 
-Change the canonical sources, bump the version, update CHANGELOG.md, regenerate, validate and review the diff. Tag approved release commits as `integration-v<version>` and never move an existing tag. The Connect guide pins a reviewed commit; installed packages update only through the host's marketplace or plugin update flow. Roll back by pinning a prior reviewed revision.
+Change the canonical sources, bump the version, update CHANGELOG.md, regenerate, validate and review the diff. Tag approved release commits as `integration-v<version>` and never move an existing tag. Merging to `main` publishes the release; installed packages pick it up through the host's marketplace update. Roll back by reverting on `main`.
 
 ## Staging
 
-`main` ships only the production package. The `staging` branch carries a `config.json` with only the staging environment, which generates `gigabrain-staging@gigabrain` for `staging-api.gigabrain.gg`; `staging.gigabrain.gg/connect` pins a commit from that branch. To update it, merge `main` into `staging`, keep the staging `config.json`, run `python3 integration/build.py` and commit the regenerated packages.
+`main` ships only the production package. The `staging` branch carries a `config.json` with only the staging environment, which generates `gigabrain-staging@gigabrain` for `staging-api.gigabrain.gg`; `staging.gigabrain.gg/connect` installs from that branch. To update it, merge `main` into `staging`, keep the staging `config.json`, run `python3 integration/build.py` and commit the regenerated packages.

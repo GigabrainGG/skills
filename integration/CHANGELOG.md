@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.5
+
+- Install from the `main` (or `staging`) branch instead of a pinned commit, and update through the host's marketplace update.
+
 ## 0.3.4
 
 - Write setup as plain steps: drop host OAuth internals (local callback, token storage, client secrets) and defensive warnings that hosts already enforce.
