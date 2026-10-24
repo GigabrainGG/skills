@@ -6,7 +6,7 @@ license: MIT
 
 # Connect Gigabrain
 
-This package is **Gigabrain staging**, version **0.3.4**, for **https://staging-api.gigabrain.gg/mcp**.
+This package is **Gigabrain staging**, version **0.3.5**, for **https://staging-api.gigabrain.gg/mcp**.
 Staging pilot. Sections are returned independently; unsupported data is omitted.
 
 The package is instructions plus a hosted MCP connection; nothing runs locally. Access needs Gigabrain OAuth, an eligible account and available allowance. No API key is involved, and your own model does the reasoning.
