@@ -1,8 +1,8 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "gigabrain",
-  "version": "0.3.1",
-  "description": "Gigabrain read-only BTC/ETH context with browser OAuth. No Gigabrain AI-provider setup.",
+  "version": "0.3.2",
+  "description": "Gigabrain read-only BTC/ETH market context for your AI agent, with browser OAuth.",
   "author": {
     "name": "Gigabrain",
     "url": "https://gigabrain.gg"

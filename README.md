@@ -8,7 +8,7 @@ Official open-source workflow skills and client packages for connecting your AI 
 
 Start at [Connect Gigabrain](https://gigabrain.gg/connect), choose a supported client, and follow its installation and browser OAuth flow. Verify setup with an authenticated market briefing. Installation or sign-in alone does not confirm that market context is available.
 
-Core market context does not require connecting an AI-provider key in Gigabrain. Account membership and shared usage limits still apply. See Connect for current client support and the [integration guide](integration/README.md) for package maintenance and release details.
+Free accounts get 50 context requests per month; membership and shared usage limits apply beyond that. See Connect for current client support and the [integration guide](integration/README.md) for package maintenance and release details.
 
 ## Workflows
 
@@ -24,10 +24,10 @@ These workflows are read-only. Customers and their configured agents retain resp
 
 - `integration/skills/`: canonical workflow skill source.
 - `integration/`: shared references, environment configuration, package generator and validation.
-- `plugins/`: generated production and staging client packages.
+- `plugins/`: generated client packages.
 - `.agents/plugins/` and `.claude-plugin/`: generated marketplace manifests.
 
-Keep one canonical skill source and generate the client packages from it. Provider integrations, calculations, authentication, membership and usage enforcement remain on Gigabrain servers.
+Keep one canonical skill source and generate the client packages from it. The `staging` branch carries the staging package for internal testing; `main` ships production only.
 
 ## Contributing
 
@@ -44,6 +44,4 @@ See [release and update instructions](integration/README.md#releases-and-updates
 
 ## SuperAgent skills
 
-Hosted SuperAgent runtime skills have moved to [GigabrainGG/superagent-skills](https://github.com/GigabrainGG/superagent-skills). That maintenance repository contains the legacy Brain API-key client, wallet, swap, trading and agent-specific portfolio skills, plus the third-party sync manifest. Their folder names are preserved there.
-
-This repository distributes the official Gigabrain market-context integration. Existing pinned Git revisions and release tags remain available for compatibility.
+Legacy SuperAgent runtime skills (wallet, swap, trading, Brain API key) live in [GigabrainGG/superagent-skills](https://github.com/GigabrainGG/superagent-skills).
