@@ -1,0 +1,12 @@
+{
+  "name": "gigabrain-staging",
+  "version": "0.3.2",
+  "description": "Gigabrain staging read-only BTC/ETH market context for your AI agent, with browser OAuth.",
+  "author": {
+    "name": "Gigabrain",
+    "url": "https://gigabrain.gg"
+  },
+  "homepage": "https://staging.gigabrain.gg/connect",
+  "repository": "https://github.com/GigabrainGG/skills",
+  "license": "MIT"
+}

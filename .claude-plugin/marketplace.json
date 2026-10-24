@@ -8,9 +8,9 @@
   },
   "plugins": [
     {
-      "name": "gigabrain",
-      "source": "./plugins/gigabrain",
-      "description": "Gigabrain read-only BTC/ETH market context for your AI agent, with browser OAuth."
+      "name": "gigabrain-staging",
+      "source": "./plugins/gigabrain-staging",
+      "description": "Gigabrain staging read-only BTC/ETH market context for your AI agent, with browser OAuth."
     }
   ]
 }

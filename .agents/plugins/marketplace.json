@@ -5,10 +5,10 @@
   },
   "plugins": [
     {
-      "name": "gigabrain",
+      "name": "gigabrain-staging",
       "source": {
         "source": "local",
-        "path": "./plugins/gigabrain"
+        "path": "./plugins/gigabrain-staging"
       },
       "policy": {
         "installation": "AVAILABLE",

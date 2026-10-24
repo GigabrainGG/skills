@@ -8,7 +8,7 @@ license: MIT
 
 Read [the context contract](references/context.md). Check account access as it describes before requesting context, unless status was already checked in this conversation.
 
-Use Gigabrain's `get_asset_context` tool at https://api.gigabrain.gg/mcp. Collect the user's asset and thesis. Only include `trade` when the user has supplied all four fields: `direction` (`long` or `short`), `entry`, `stop` and `target`, in USDT per asset. All levels must be positive; long requires stop < entry < target and short requires target < entry < stop.
+Use Gigabrain staging's `get_asset_context` tool at https://staging-api.gigabrain.gg/mcp. Collect the user's asset and thesis. Only include `trade` when the user has supplied all four fields: `direction` (`long` or `short`), `entry`, `stop` and `target`, in USDT per asset. All levels must be positive; long requires stop < entry < target and short requires target < entry < stop.
 
 If levels are missing, ask for them when arithmetic is needed, or request asset-only context and say trade math was omitted. Do not infer levels from market prices or invent the user's horizon, portfolio, conviction or risk tolerance. A stated horizon is interpretive context, not a tool parameter.
 

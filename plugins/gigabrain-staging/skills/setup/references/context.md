@@ -7,7 +7,7 @@
 Call `get_connection_status` before the first context call in a conversation. `connected: true` only means OAuth works. Decide the next step from `membership.access`:
 
 - `ready`: continue. If `tier` is `free`, the account has 50 context requests per UTC calendar month; do not call that a paid subscription or wallet membership. If `hasPaidSubscription` is false and `tier` is not `free`, a qualifying wallet grants access; do not upsell.
-- `membership_required`: tell the user they do not have an active paid subscription or qualifying wallet membership, so market context is locked even though Gigabrain is connected. Show `membership.upgradeUrl` (fallback: https://gigabrain.gg/profile?tab=plan) as "View membership options" and stop without calling context. The link opens plan options; it does not mean checkout is open.
+- `membership_required`: tell the user they do not have an active paid subscription or qualifying wallet membership, so market context is locked even though Gigabrain is connected. Show `membership.upgradeUrl` (fallback: https://staging.gigabrain.gg/profile?tab=plan) as "View membership options" and stop without calling context. The link opens plan options; it does not mean checkout is open.
 - `allowance_exhausted`: explain the reset. For `free`, also offer the upgrade link; members wait for the reset, since another membership adds no quota.
 - `not_enabled`: explain the rollout restriction. `temporarily_unavailable`, or a null `hasPaidSubscription`: status is unknown; do not call the user unpaid or suggest paying as a fix.
 

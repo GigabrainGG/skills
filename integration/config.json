@@ -3,13 +3,13 @@
   "marketplace": "gigabrain",
   "repository": "https://github.com/GigabrainGG/skills",
   "environments": {
-    "production": {
-      "name": "gigabrain",
-      "label": "Gigabrain",
-      "origin": "https://gigabrain.gg",
-      "mcp": "https://api.gigabrain.gg/mcp",
-      "claudeClientId": "gigabrain-claude",
-      "availability": "Sections are returned independently; unsupported data is omitted."
+    "staging": {
+      "name": "gigabrain-staging",
+      "label": "Gigabrain staging",
+      "origin": "https://staging.gigabrain.gg",
+      "mcp": "https://staging-api.gigabrain.gg/mcp",
+      "claudeClientId": "gigabrain-claude-staging",
+      "availability": "Staging pilot. Sections are returned independently; unsupported data is omitted."
     }
   }
 }

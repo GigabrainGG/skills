@@ -1,20 +1,20 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
-  "name": "gigabrain",
+  "name": "gigabrain-staging",
   "version": "0.3.2",
-  "description": "Gigabrain read-only BTC/ETH market context for your AI agent, with browser OAuth.",
+  "description": "Gigabrain staging read-only BTC/ETH market context for your AI agent, with browser OAuth.",
   "author": {
     "name": "Gigabrain",
     "url": "https://gigabrain.gg"
   },
-  "homepage": "https://gigabrain.gg/connect",
+  "homepage": "https://staging.gigabrain.gg/connect",
   "repository": "https://github.com/GigabrainGG/skills",
   "license": "MIT",
   "extensions": {
     "com.openai": {
       "onboardingSkill": "./skills/setup/SKILL.md",
       "interface": {
-        "displayName": "Gigabrain",
+        "displayName": "Gigabrain staging",
         "shortDescription": "Market context for your AI agent",
         "category": "Productivity",
         "capabilities": [

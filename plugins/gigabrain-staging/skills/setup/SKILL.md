@@ -6,8 +6,8 @@ license: MIT
 
 # Connect Gigabrain
 
-This package is **Gigabrain**, version **0.3.2**, for **https://api.gigabrain.gg/mcp**.
-Sections are returned independently; unsupported data is omitted.
+This package is **Gigabrain staging**, version **0.3.2**, for **https://staging-api.gigabrain.gg/mcp**.
+Staging pilot. Sections are returned independently; unsupported data is omitted.
 
 The package is instructions plus a hosted MCP connection; nothing runs locally. Access needs Gigabrain OAuth, an eligible account and available allowance. No API key is involved, and your own model does the reasoning.
 
@@ -29,6 +29,6 @@ Read [connection instructions](references/connection.md) for the actual host bef
 - 429: show the limit and reset or Retry-After; do not loop or switch accounts.
 - 409: this request ID was already admitted; do not resubmit with a new ID automatically.
 - 503 or no usable evidence: report context unavailable and do not mark setup complete.
-- Manage or revoke access at https://gigabrain.gg/connect?tab=connected. Uninstalling the plugin and revoking its OAuth grant are separate actions.
+- Manage or revoke access at https://staging.gigabrain.gg/connect?tab=connected. Uninstalling the plugin and revoking its OAuth grant are separate actions.
 
 Setup includes no trading, wallet signing, transfers, account creation or recurring jobs.
