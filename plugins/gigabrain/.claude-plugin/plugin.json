@@ -1,6 +1,6 @@
 {
   "name": "gigabrain",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "Gigabrain read-only BTC/ETH market context for your AI agent, with browser OAuth.",
   "author": {
     "name": "Gigabrain",
