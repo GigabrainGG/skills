@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.4
+
+- Write setup as plain steps: drop host OAuth internals (local callback, token storage, client secrets) and defensive warnings that hosts already enforce.
+
 ## 0.3.3
 
 - Relay the server's `membership.message` instead of re-deriving each access state in the skills.
