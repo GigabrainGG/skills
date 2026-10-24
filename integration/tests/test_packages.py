@@ -22,7 +22,7 @@ class Packages(unittest.TestCase):
             target = ROOT.parent / relative
             self.assertFalse(target.is_symlink())
             self.assertEqual(target.read_text(), content, str(relative))
-            self.assertNotRegex(content, r"@(PLUGIN|LABEL|VERSION|ORIGIN|MCP_URL|CLAUDE_CLIENT_ID|AVAILABILITY)@")
+            self.assertNotRegex(content, r"@(PLUGIN|LABEL|VERSION|ORIGIN|MCP_URL|CLAUDE_CLIENT_ID|AVAILABILITY|BRANCH)@")
 
     def test_manifests_validate_against_official_portable_schemas(self):
         for folder in (ROOT.parent / "plugins").iterdir():

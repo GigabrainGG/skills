@@ -20,7 +20,7 @@ def render():
         folder = Path("plugins") / name
         replacements = {
             "@PLUGIN@": name, "@LABEL@": env["label"], "@VERSION@": config["version"],
-            "@ORIGIN@": env["origin"], "@MCP_URL@": env["mcp"],
+            "@ORIGIN@": env["origin"], "@MCP_URL@": env["mcp"], "@BRANCH@": env["branch"],
             "@CLAUDE_CLIENT_ID@": env["claudeClientId"], "@AVAILABILITY@": env["availability"],
         }
         def expand(text):
