@@ -76,6 +76,15 @@ class Packages(unittest.TestCase):
             self.assertTrue((ROOT.parent / path / "plugin.json").is_file())
             self.assertEqual(entry["policy"]["installation"], "AVAILABLE")
 
+    def test_production_package_contains_no_staging_references(self):
+        config = json.loads((ROOT / "config.json").read_text())
+        for env in config["environments"].values():
+            if "staging" in env["name"]:
+                continue
+            for path in (ROOT.parent / "plugins" / env["name"]).rglob("*"):
+                if path.is_file():
+                    self.assertNotIn("staging", path.read_text().lower(), str(path))
+
 
 if __name__ == "__main__":
     unittest.main()

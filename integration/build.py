@@ -29,7 +29,7 @@ def render():
             return text
         identity = {
             "name": name, "version": config["version"],
-            "description": f"{env['label']} read-only BTC/ETH context with browser OAuth. No Gigabrain AI-provider setup.",
+            "description": f"{env['label']} read-only BTC/ETH market context for your AI agent, with browser OAuth.",
             "author": {"name": "Gigabrain", "url": "https://gigabrain.gg"},
             "homepage": env["origin"] + "/connect", "repository": config["repository"], "license": "MIT",
         }
@@ -54,15 +54,15 @@ def render():
         for path in sorted((SOURCE / "skills").rglob("*")):
             if path.is_file():
                 files[folder / "skills" / path.relative_to(SOURCE / "skills")] = expand(path.read_text())
-        for skill in ("asset-briefing", "trade-thesis-review"):
-            files[folder / "skills" / skill / "references/context.md"] = (SOURCE / "context.md").read_text()
+        for skill in ("asset-briefing", "setup", "trade-thesis-review"):
+            files[folder / "skills" / skill / "references/context.md"] = expand((SOURCE / "context.md").read_text())
         codex_entries.append({"name": name, "source": {"source": "local", "path": "./" + str(folder)},
             "policy": {"installation": "AVAILABLE", "authentication": "ON_INSTALL"}, "category": "Productivity"})
         claude_entries.append({"name": name, "source": "./" + str(folder), "description": identity["description"]})
     files[Path(".agents/plugins/marketplace.json")] = encoded({"name": config["marketplace"],
         "interface": {"displayName": "Gigabrain"}, "plugins": codex_entries})
     files[Path(".claude-plugin/marketplace.json")] = encoded({"name": config["marketplace"],
-        "owner": {"name": "Gigabrain"}, "metadata": {"description": "Read-only market context with Gigabrain OAuth"}, "plugins": claude_entries})
+        "owner": {"name": "Gigabrain"}, "metadata": {"description": "Market intelligence for your AI agents"}, "plugins": claude_entries})
     return files
 
 

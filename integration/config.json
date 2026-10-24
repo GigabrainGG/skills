@@ -1,23 +1,15 @@
 {
-  "version": "0.3.1-rc.1",
+  "version": "0.3.2",
   "marketplace": "gigabrain",
   "repository": "https://github.com/GigabrainGG/skills",
   "environments": {
-    "production": {
-      "name": "gigabrain",
-      "label": "Gigabrain",
-      "origin": "https://gigabrain.gg",
-      "mcp": "https://api.gigabrain.gg/mcp",
-      "claudeClientId": "gigabrain-claude",
-      "availability": "Prepared for production; not activated. Do not attempt sign-in until the official Connect page enables setup."
-    },
     "staging": {
       "name": "gigabrain-staging",
       "label": "Gigabrain staging",
       "origin": "https://staging.gigabrain.gg",
       "mcp": "https://staging-api.gigabrain.gg/mcp",
       "claudeClientId": "gigabrain-claude-staging",
-      "availability": "Staging pilot. Universal policy context returns healthy sections even when individual data providers are unavailable."
+      "availability": "Staging pilot. Sections are returned independently; unsupported data is omitted."
     }
   }
 }

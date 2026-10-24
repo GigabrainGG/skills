@@ -1,37 +1,32 @@
 # Host connection routes
 
-Package: `gigabrain-staging@gigabrain`, version `0.3.1-rc.1`.
+Package: `gigabrain-staging@gigabrain`, version `0.3.2`.
 Endpoint: `https://staging-api.gigabrain.gg/mcp` (Streamable HTTP).
 Account: https://staging.gigabrain.gg/connect?tab=connected.
 Scopes: `account:read intelligence:read offline_access`.
-Staging pilot. Universal policy context returns healthy sections even when individual data providers are unavailable.
 
-Use the immutable revision in the official guide at https://staging.gigabrain.gg/connect/setup when installing. Review the package source before installation. Commands below assume the current host exposes those commands in `--help`; plugin commands and OAuth behavior differ across host versions.
+Use the pinned revision from the official guide at https://staging.gigabrain.gg/connect/setup. Check that each command below exists in the installed host's `--help`; plugin commands and OAuth behavior vary by version.
 
 ## Codex
 
-Prefer the package's portable `plugin.json`, `mcp.json` and bundled skills. Register the official marketplace at the guide's pinned revision with `codex plugin marketplace add GigabrainGG/skills --ref <PINNED_REVISION>`, inspect `codex plugin list`, and install `codex plugin add gigabrain-staging@gigabrain` where supported. In desktop versions with UI-only installation, choose the Gigabrain source in the plugin directory and install this package. Start a new session after installation. Run this package's setup skill.
+Add the marketplace at the guide's pinned revision with `codex plugin marketplace add GigabrainGG/skills --ref <PINNED_REVISION>`, check `codex plugin list`, then `codex plugin add gigabrain-staging@gigabrain`. In desktop versions that install plugins through the UI, pick this package from the Gigabrain marketplace. Start a new session, then run this package's setup skill. Codex handles OAuth through its own connection UI.
 
-Modern Codex uses its trusted public client metadata document (`https://chatgpt.com/oauth/codex/client.json`). Let native OAuth discovery and the host's connection UI handle consent. Do not substitute DCR: this server does not enable open dynamic registration.
-
-If this Codex version cannot load a bundled remote MCP, install just the three reviewed skills using its documented skill installer and configure the remote connection with `codex mcp add gigabrain-staging --url https://staging-api.gigabrain.gg/mcp --oauth-client-id https://chatgpt.com/oauth/codex/client.json` where `--oauth-client-id` is supported. Use `codex mcp login gigabrain-staging --scopes account:read,intelligence:read,offline_access`. Inspect existing entries first and do not configure this fallback alongside a working plugin server. If the installed version lacks these capabilities, explain the required update instead of changing global credentials.
+If this Codex version cannot load a bundled remote MCP, install only the three skills with its skill installer and add the server with `codex mcp add gigabrain-staging --url https://staging-api.gigabrain.gg/mcp --oauth-client-id https://chatgpt.com/oauth/codex/client.json`, then `codex mcp login gigabrain-staging --scopes account:read,intelligence:read,offline_access`. Do not add this fallback alongside a working plugin server. If the version supports neither route, explain the required update.
 
 ## Claude Code
 
-Use Claude's plugin marketplace route. Clone the official repository at the guide's immutable revision into a dedicated directory without overwriting an existing checkout. Add that reviewed directory with `claude plugin marketplace add <checkout>`, then `claude plugin install gigabrain-staging@gigabrain`. Local-path marketplace installation keeps the reviewed snapshot fixed; update it explicitly as described below.
+Clone the official repository at the guide's pinned revision into a dedicated directory, without overwriting an existing checkout. Run `claude plugin marketplace add <checkout>`, then `claude plugin install gigabrain-staging@gigabrain`. The local checkout keeps the installed snapshot fixed until you update it.
 
-The generated `.mcp.json` declares the native HTTP transport and public client ID `gigabrain-claude-staging`. No client secret is used. Start a new session or use the host's supported plugin reload, then open `/mcp` and authenticate `plugin:gigabrain-staging:gigabrain-staging`. Claude controls the OAuth callback and protected token storage. A Claude model subscription/API account is needed to run Claude itself; no separate AI-provider connection in Gigabrain is needed.
+The package's `.mcp.json` declares HTTP transport and the public client ID `gigabrain-claude-staging`; there is no client secret. Start a new session or reload plugins, open `/mcp` and authenticate `plugin:gigabrain-staging:gigabrain-staging`. Claude handles the OAuth callback and token storage.
 
 ## Other agents
 
-Require documented Agent Skills support plus remote Streamable HTTP MCP and OAuth authorization-code/PKCE support. Install only this package's three skill folders; importing skills alone does not connect MCP. Configure the stated remote endpoint using the host's native OAuth connector. This pilot accepts reviewed public client registrations and trusted Codex client metadata; unknown clients may be rejected. Report an unsupported OAuth client rather than inventing a client ID, sharing another client's credentials, or using an API-key fallback.
+The host needs Agent Skills support plus remote Streamable HTTP MCP with OAuth authorization-code/PKCE. Install the three skill folders (skills alone do not configure MCP) and add the endpoint above through the host's OAuth connector. Unregistered OAuth clients may be rejected: report that instead of inventing a client ID or borrowing another client's.
 
-## Existing installs, updates and removal
+## Updates and removal
 
-Inspect installed package/version and remote endpoint before modifying them. Keep staging and production distinct. If the exact package is already installed, reuse it and verify access. Ask before replacing locally modified skills or changing a different endpoint.
+For an update, read the release notes, move the marketplace to the new pinned revision and use the host's update command. For a local Claude marketplace, check out the new revision in its checkout, then `claude plugin marketplace update gigabrain` and `claude plugin update gigabrain-staging@gigabrain`. For Codex, update the marketplace ref first; a pinned ref does not follow `main`. Reload and verify with one authorized context call. The website changing does not update installed packages.
 
-For an update, review the release notes and new immutable revision, refresh only the relevant marketplace snapshot, and use the host's supported update/reinstall command. For a local Claude marketplace, fetch the reviewed revision in its dedicated checkout, update that marketplace, then `claude plugin update gigabrain-staging@gigabrain`. For Codex, update its marketplace ref explicitly before upgrade/reinstall; a pinned ref intentionally does not follow main. Restart/reload and verify tool discovery and one authorized context call. The website changing does not update installed packages.
-
-For removal, use `codex plugin remove gigabrain-staging@gigabrain` or `claude plugin uninstall gigabrain-staging@gigabrain` if supported. Remove fallback configuration only when this setup created it and the user requests removal. Keep unrelated skills and servers. Revoke the account grant separately when the user wants access disconnected.
+To remove, use `codex plugin remove gigabrain-staging@gigabrain` or `claude plugin uninstall gigabrain-staging@gigabrain`. Remove fallback configuration only if this setup created it. Revoking the account grant is a separate step.
 
 Host references: https://developers.openai.com/plugins/build/plugins ; https://code.claude.com/docs/en/plugins ; https://code.claude.com/docs/en/mcp .

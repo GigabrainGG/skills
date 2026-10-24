@@ -1,40 +1,47 @@
-# GigaBrain Agent Skills
+# Gigabrain Skills
 
-Open-source skills for [GigaBrain](https://gigabrain.gg) agents. Compatible with the [Agent Skills](https://agentskills.io) open standard.
+**Market intelligence for your AI agents.**
 
-## New read-only OAuth integration
+Official open-source workflow skills and client packages for connecting your AI to [Gigabrain](https://gigabrain.gg). Your AI supplies the reasoning; Gigabrain supplies sourced market context, evidence, timestamps, coverage information and deterministic calculations through a hosted, read-only MCP connection.
 
-The canonical market-context plugin source is [integration/](integration/README.md). It generates Codex/Agent Plugins and Claude packages from the same setup, asset briefing and trade-thesis review skills. Core MCP context requires no AI-provider connection in Gigabrain. Start from the [Connect page](https://gigabrain.gg/connect); the release candidate is a staging pilot, with live context awaiting data-plan renewal. The legacy skills below keep their existing paths and are not bundled into the new package.
+## Connect Gigabrain
 
-## Skills
+Start at [Connect Gigabrain](https://gigabrain.gg/connect), choose a supported client, and follow its installation and browser OAuth flow. Verify setup with an authenticated market briefing. Installation or sign-in alone does not confirm that market context is available.
 
-| Skill | Description |
+Free accounts get 50 context requests per month; membership and shared usage limits apply beyond that. See Connect for current client support and the [integration guide](integration/README.md) for package maintenance and release details.
+
+## Workflows
+
+| Skill | Purpose |
 |---|---|
-| `hyperliquid` | Trade perps, spot, and transfer USDC on HyperLiquid |
-| `polymarket` | Trade prediction markets on Polymarket |
-| `polymarket-deep-research` | Read-only thesis building and market research for Polymarket |
-| `brain` | Primary Brain market intelligence stack for macro, microstructure, fundamentals, sentiment, and Polymarket context |
-| `portfolio-tracker` | Portfolio overview and P&L tracking |
+| `setup` | Install/connect the reviewed package, authorize the account and verify useful context. |
+| `asset-briefing` | Build a sourced asset briefing with freshness, coverage gaps and conflicting evidence. |
+| `trade-thesis-review` | Review a supplied thesis against market evidence and explicit assumptions. |
 
-## How It Works
+These workflows are read-only. Customers and their configured agents retain responsibility for strategy, sizing and execution.
 
-GigaBrain agents automatically sync skills from this repo. Each skill is a folder with:
+## Repository structure
 
-- `SKILL.md` — Instructions the agent follows (YAML frontmatter + markdown)
-- `scripts/` — Executable scripts (Python, Node, shell — any language)
-- `references/` — Additional documentation the agent can read on demand
+- `integration/skills/`: canonical workflow skill source.
+- `integration/`: shared references, environment configuration, package generator and validation.
+- `plugins/`: generated client packages.
+- `.agents/plugins/` and `.claude-plugin/`: generated marketplace manifests.
 
-Scripts declare their own dependencies via [PEP 723](https://peps.python.org/pep-0723/) inline metadata and run in isolated environments via `uv run`. No dependency conflicts between skills.
+Keep one canonical skill source and generate the client packages from it. The `staging` branch carries the staging package for internal testing; `main` ships production only.
 
 ## Contributing
 
-1. Create a folder with your skill name
-2. Add a `SKILL.md` with YAML frontmatter (`name`, `description`, `license`)
-3. Add scripts in `scripts/` with inline dependency metadata
-4. Open a PR
+Edit the canonical source, regenerate the packages and validate:
 
-See any existing skill for the format.
+```sh
+python3 -m pip install -r integration/requirements-dev.txt
+python3 integration/build.py
+python3 integration/build.py --check
+python3 -m unittest discover -s integration/tests -v
+```
 
-## Using in Other Agents
+See [release and update instructions](integration/README.md#releases-and-updates). Do not edit generated packages by hand or move existing release tags. Package contents are licensed under [MIT](integration/LICENSE); vendored schemas retain their own notices.
 
-These skills follow the Agent Skills standard and work with any compatible agent platform — OpenClaw, Claude Code, Cursor, and others.
+## SuperAgent skills
+
+Legacy SuperAgent runtime skills (wallet, swap, trading, Brain API key) live in [GigabrainGG/superagent-skills](https://github.com/GigabrainGG/superagent-skills).
