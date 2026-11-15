@@ -6,7 +6,7 @@ license: MIT
 
 # Connect Gigabrain
 
-This package is **Gigabrain**, version **0.3.5**, for **https://api.gigabrain.gg/mcp**.
+This package is **Gigabrain**, version **0.3.6**, for **https://api.gigabrain.gg/mcp**.
 Sections are returned independently; unsupported data is omitted.
 
 The package is instructions plus a hosted MCP connection; nothing runs locally. Access needs Gigabrain OAuth, an eligible account and available allowance. No API key is involved, and your own model does the reasoning.
@@ -24,6 +24,7 @@ Read [connection instructions](references/connection.md) for the actual host bef
 ## Recovery
 
 - Canceled browser consent: leave the installation intact; resume sign-in when the user asks.
+- Tools missing after installation: sign-in was skipped, canceled or failed, or it expired. Follow "When the tools are missing" in [the context contract](references/context.md).
 - 401 or expired/revoked authorization: use the host's reconnect. An old grant without `intelligence:read` needs fresh consent; refresh cannot add scopes.
 - 403 `MEMBERSHIP_REQUIRED`: show `error.membership.message` and its upgrade link, then stop. Other 403s are scope or rollout restrictions; report them as such.
 - 429: show the limit and reset time, then stop.

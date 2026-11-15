@@ -6,7 +6,7 @@ license: MIT
 
 # Asset briefing
 
-Read [the context contract](references/context.md). Check account access as it describes before requesting context, unless status was already checked in this conversation.
+Read [the context contract](references/context.md). Check account access as it describes before requesting context, unless status was already checked in this conversation. If the @LABEL@ tools are not available, follow its "When the tools are missing" section instead of answering from other sources.
 
 Use the configured @LABEL@ MCP at @MCP_URL@. Discover the host-prefixed `get_asset_context` tool and request `{"asset":"BTC"}` or `{"asset":"ETH"}` for the asset the user chose. If the asset is missing or unsupported, ask instead of substituting one. The server chooses the timeframes; do not ask the user for a venue, model or timeframe. Make one call and reuse it for the whole answer.
 

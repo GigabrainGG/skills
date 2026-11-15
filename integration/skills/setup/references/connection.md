@@ -9,7 +9,7 @@ Commands vary by host version; check them against the installed host's `--help`.
 
 ## Codex
 
-Run `codex plugin marketplace add GigabrainGG/skills --ref @BRANCH@`, then `codex plugin add @PLUGIN@@gigabrain`. In desktop versions that install plugins through the UI, pick this package from the Gigabrain marketplace. Start a new session and run the setup skill.
+Run `codex plugin marketplace add GigabrainGG/skills --ref @BRANCH@`, then `codex plugin add @PLUGIN@@gigabrain`. In desktop versions that install plugins through the UI, pick this package from the Gigabrain marketplace. Installing opens Gigabrain sign-in. If that was skipped or did not finish, sign in from Settings → MCP servers → `@PLUGIN@` → Authenticate, or run `codex mcp login @PLUGIN@`. Start a new session and run the setup skill.
 
 If this Codex version cannot load a bundled remote MCP, install the three skills with its skill installer, add the server with `codex mcp add @PLUGIN@ --url @MCP_URL@ --oauth-client-id https://chatgpt.com/oauth/codex/client.json`, then run `codex mcp login @PLUGIN@ --scopes account:read,intelligence:read,offline_access`. Use this fallback only when no plugin server is configured.
 
