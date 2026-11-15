@@ -24,6 +24,7 @@ Read [connection instructions](references/connection.md) for the actual host bef
 ## Recovery
 
 - Canceled browser consent: leave the installation intact; resume sign-in when the user asks.
+- Tools missing after installation: sign-in was skipped, canceled or failed, or it expired. Follow "When the tools are missing" in [the context contract](references/context.md).
 - 401 or expired/revoked authorization: use the host's reconnect. An old grant without `intelligence:read` needs fresh consent; refresh cannot add scopes.
 - 403 `MEMBERSHIP_REQUIRED`: show `error.membership.message` and its upgrade link, then stop. Other 403s are scope or rollout restrictions; report them as such.
 - 429: show the limit and reset time, then stop.

@@ -1,6 +1,6 @@
 # Host connection routes
 
-Package: `gigabrain@gigabrain`, version `0.3.5`.
+Package: `gigabrain@gigabrain`, version `0.3.6`.
 Endpoint: `https://api.gigabrain.gg/mcp` (Streamable HTTP).
 Account: https://gigabrain.gg/connect?tab=connected.
 Scopes: `account:read intelligence:read offline_access`.
@@ -9,7 +9,7 @@ Commands vary by host version; check them against the installed host's `--help`.
 
 ## Codex
 
-Run `codex plugin marketplace add GigabrainGG/skills --ref main`, then `codex plugin add gigabrain@gigabrain`. In desktop versions that install plugins through the UI, pick this package from the Gigabrain marketplace. Start a new session and run the setup skill.
+Run `codex plugin marketplace add GigabrainGG/skills --ref main`, then `codex plugin add gigabrain@gigabrain`. In desktop versions that install plugins through the UI, pick this package from the Gigabrain marketplace. Installing opens Gigabrain sign-in. If that was skipped or did not finish, sign in from Settings → MCP servers → `gigabrain` → Authenticate, or run `codex mcp login gigabrain`. Start a new session and run the setup skill.
 
 If this Codex version cannot load a bundled remote MCP, install the three skills with its skill installer, add the server with `codex mcp add gigabrain --url https://api.gigabrain.gg/mcp --oauth-client-id https://chatgpt.com/oauth/codex/client.json`, then run `codex mcp login gigabrain --scopes account:read,intelligence:read,offline_access`. Use this fallback only when no plugin server is configured.
 

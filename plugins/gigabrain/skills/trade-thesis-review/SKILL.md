@@ -6,7 +6,7 @@ license: MIT
 
 # Review a supplied trade thesis
 
-Read [the context contract](references/context.md). Check account access as it describes before requesting context, unless status was already checked in this conversation.
+Read [the context contract](references/context.md). Check account access as it describes before requesting context, unless status was already checked in this conversation. If the Gigabrain tools are not available, follow its "When the tools are missing" section instead of answering from other sources.
 
 Use Gigabrain's `get_asset_context` tool at https://api.gigabrain.gg/mcp. Collect the user's asset and thesis. Only include `trade` when the user has supplied all four fields: `direction` (`long` or `short`), `entry`, `stop` and `target`, in USDT per asset. All levels must be positive; long requires stop < entry < target and short requires target < entry < stop.
 

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.6
+
+- When the Gigabrain tools are missing, tell the user the connection is signed out and how to sign in, instead of answering from other sources. Codex hides a signed-out server's tools and does not prompt again after install-time sign-in is skipped or fails.
+
 ## 0.3.5
 
 - Install from the `main` (or `staging`) branch instead of a pinned commit, and update through the host's marketplace update.

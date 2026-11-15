@@ -2,6 +2,15 @@
 
 `get_asset_context({asset: "BTC" | "ETH", trade?, request_id?})` returns one bundle. One successful call, including partial coverage, uses one request from the account's shared allowance; reuse it across sections. `get_connection_status` reports connection and membership and uses no allowance. Gigabrain returns evidence and deterministic calculations; you supply the reasoning.
 
+## When the tools are missing
+
+A host hides a server's tools until it is signed in. If no `get_connection_status` or `get_asset_context` tool is available under any prefix, Gigabrain is installed but not signed in, or its sign-in expired or was revoked. Do not answer from other sources as if they were Gigabrain context. Tell the user Gigabrain needs sign-in and how to do it in their host:
+
+- Codex app: Settings → MCP servers → `gigabrain` → Authenticate. In a terminal: `codex mcp login gigabrain`.
+- Claude Code: open `/mcp` and authenticate `plugin:gigabrain:gigabrain`.
+
+Sign-in opens https://gigabrain.gg in the browser, where the user approves access. Codex adds the tools to the current conversation once sign-in completes; in other hosts, start a new conversation. Then continue with the user's request. If the user wants an answer without Gigabrain instead, name the sources you used.
+
 ## Account access
 
 Call `get_connection_status` before the first context call in a conversation. `connected: true` only means OAuth works. Show the user `membership.message`, which the server words for their exact state (free tier, paid, wallet, locked, exhausted, rollout or unavailable); add `membership.upgradeUrl` as "View membership options" when it is present. Request context only when `membership.access` is `ready`; otherwise stop there. A 403 `MEMBERSHIP_REQUIRED` tool error carries the same fields under `error.membership`. After the user activates membership, recheck status on the same connection; no reinstall is needed. Membership changes happen on the user's plan page.
