@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.0
+
+- Target the `context.v4` contract the server now returns. The skills required `asset-context.v3` and treated any other version as a contract mismatch, so setup could not verify a working connection and briefings refused live responses.
+- Call `get_asset_context` with `symbols` (a list) instead of `asset`, and review trade levels with `check_trade_plan` instead of the removed `trade` argument.
+- Describe the ten served tools, the v4 envelope, the reading object and `unavailable`, and drop the six-section and `request_id` rules.
+
 ## 0.3.6
 
 - When the Gigabrain tools are missing, tell the user the connection is signed out and how to sign in, instead of answering from other sources. Codex hides a signed-out server's tools and does not prompt again after install-time sign-in is skipped or fails.

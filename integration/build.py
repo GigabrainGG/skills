@@ -29,7 +29,7 @@ def render():
             return text
         identity = {
             "name": name, "version": config["version"],
-            "description": f"{env['label']} read-only BTC/ETH market context for your AI agent, with browser OAuth.",
+            "description": f"{env['label']} read-only market context for your AI agent, with browser OAuth.",
             "author": {"name": "Gigabrain", "url": "https://gigabrain.gg"},
             "homepage": env["origin"] + "/connect", "repository": config["repository"], "license": "MIT",
         }
