@@ -1,5 +1,5 @@
 {
-  "version": "0.3.6",
+  "version": "0.4.0",
   "marketplace": "gigabrain",
   "repository": "https://github.com/GigabrainGG/skills",
   "environments": {
@@ -9,7 +9,7 @@
       "origin": "https://gigabrain.gg",
       "mcp": "https://api.gigabrain.gg/mcp",
       "claudeClientId": "gigabrain-claude",
-      "availability": "Sections are returned independently; unsupported data is omitted.",
+      "availability": "Readings that cannot be computed are listed in `unavailable` with a reason.",
       "branch": "main"
     }
   }

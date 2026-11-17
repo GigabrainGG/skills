@@ -10,7 +10,7 @@
     {
       "name": "gigabrain",
       "source": "./plugins/gigabrain",
-      "description": "Gigabrain read-only BTC/ETH market context for your AI agent, with browser OAuth."
+      "description": "Gigabrain read-only market context for your AI agent, with browser OAuth."
     }
   ]
 }

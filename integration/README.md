@@ -4,7 +4,7 @@ Canonical source for the Gigabrain plugin: setup, asset briefing and trade-thesi
 
 ## Install
 
-Use the [Connect page](https://gigabrain.gg/connect). Its setup guide installs `gigabrain@gigabrain` from `main`. The package targets the public `asset-context.v3` contract.
+Use the [Connect page](https://gigabrain.gg/connect). Its setup guide installs `gigabrain@gigabrain` from `main`. The package targets the public `context.v4` contract.
 
 ## Build and validate
 

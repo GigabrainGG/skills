@@ -6,8 +6,8 @@ license: MIT
 
 # Connect Gigabrain
 
-This package is **Gigabrain**, version **0.3.6**, for **https://api.gigabrain.gg/mcp**.
-Sections are returned independently; unsupported data is omitted.
+This package is **Gigabrain**, version **0.4.0**, for **https://api.gigabrain.gg/mcp**.
+Readings that cannot be computed are listed in `unavailable` with a reason.
 
 The package is instructions plus a hosted MCP connection; nothing runs locally. Access needs Gigabrain OAuth, an eligible account and available allowance. No API key is involved, and your own model does the reasoning.
 
@@ -18,8 +18,8 @@ Read [connection instructions](references/connection.md) for the actual host bef
 1. Identify the host and its version. Use its plugin installer, or its documented skill plus remote MCP setup if plugins are unavailable. If the host supports neither, tell the user which capability is missing.
 2. Sign in through the host's connection flow, which opens Gigabrain in the browser and requests `account:read intelligence:read offline_access`. The user approves access there, and the host keeps the connection signed in.
 3. Discover the tools (host prefixes vary) and call `get_connection_status`. Report that OAuth is connected, then show `membership.message` and any `membership.upgradeUrl` (see [the context contract](references/context.md)). Stop here unless `membership.access` is `ready`.
-4. Explain that one context check uses one request from the shared allowance. If the user's setup request already authorizes verification, call `get_asset_context` once with `{"asset":"BTC"}`; otherwise ask first.
-5. Require a successful `asset-context.v3` response with `data_mode: live`, BTC, at least one useful section and `coverage.included` matching the returned sections. Summarize which of the six sections (market, technicals, positioning, fundamentals, catalysts, macro) came back and any material caveats. Only then report that context is ready. Installation and OAuth alone do not prove usable context.
+4. Explain that one context check uses one request from the shared allowance. If the user's setup request already authorizes verification, call `get_asset_context` once with `{"symbols":["BTC"]}`; otherwise ask first.
+5. Require a successful `context.v4` response from `get_asset_context` with readings for BTC in `data.readings`. Report the `verdict` and `headline`, the price and nearest levels, how many readings came back, any marked `stale_min`, and what `unavailable` lists, grouped by reason. Only then report that context is ready. Installation and OAuth alone do not prove usable context.
 
 ## Recovery
 
@@ -28,8 +28,8 @@ Read [connection instructions](references/connection.md) for the actual host bef
 - 401 or expired/revoked authorization: use the host's reconnect. An old grant without `intelligence:read` needs fresh consent; refresh cannot add scopes.
 - 403 `MEMBERSHIP_REQUIRED`: show `error.membership.message` and its upgrade link, then stop. Other 403s are scope or rollout restrictions; report them as such.
 - 429: show the limit and reset time, then stop.
-- 409: this request ID was already admitted; report it and let the user decide whether to run a new request.
-- 503 or no usable evidence: report context unavailable; setup is not complete yet.
+- A schema version other than `context.v4`: report a contract mismatch and suggest updating the package; do not interpret the payload.
+- 503 or no readings for BTC: report context unavailable; setup is not complete yet.
 - Manage or revoke access at https://gigabrain.gg/connect?tab=connected. Uninstalling the plugin and revoking its OAuth grant are separate actions.
 
 Setup includes no trading, wallet signing, transfers, account creation or recurring jobs.
