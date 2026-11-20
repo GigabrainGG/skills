@@ -1,6 +1,6 @@
 {
   "name": "gigabrain",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Gigabrain read-only market context for your AI agent, with browser OAuth.",
   "author": {
     "name": "Gigabrain",

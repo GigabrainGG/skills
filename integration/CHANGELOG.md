@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.1
+
+- Describe the slimmer `unavailable` list the server now returns: it names only what you asked for or rely on that could not be measured, with a `reason` only when changing the request can fix it. It no longer carries counts of other readings or a reason on every entry.
+
 ## 0.4.0
 
 - Target the `context.v4` contract the server now returns. The skills required `asset-context.v3` and treated any other version as a contract mismatch, so setup could not verify a working connection and briefings refused live responses.

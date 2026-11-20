@@ -6,8 +6,8 @@ license: MIT
 
 # Connect Gigabrain
 
-This package is **Gigabrain**, version **0.4.0**, for **https://api.gigabrain.gg/mcp**.
-Readings that cannot be computed are listed in `unavailable` with a reason.
+This package is **Gigabrain**, version **0.4.1**, for **https://api.gigabrain.gg/mcp**.
+What you asked for or rely on that could not be measured is named in `unavailable`.
 
 The package is instructions plus a hosted MCP connection; nothing runs locally. Access needs Gigabrain OAuth, an eligible account and available allowance. No API key is involved, and your own model does the reasoning.
 
@@ -19,7 +19,7 @@ Read [connection instructions](references/connection.md) for the actual host bef
 2. Sign in through the host's connection flow, which opens Gigabrain in the browser and requests `account:read intelligence:read offline_access`. The user approves access there, and the host keeps the connection signed in.
 3. Discover the tools (host prefixes vary) and call `get_connection_status`. Report that OAuth is connected, then show `membership.message` and any `membership.upgradeUrl` (see [the context contract](references/context.md)). Stop here unless `membership.access` is `ready`.
 4. Explain that one context check uses one request from the shared allowance. If the user's setup request already authorizes verification, call `get_asset_context` once with `{"symbols":["BTC"]}`; otherwise ask first.
-5. Require a successful `context.v4` response from `get_asset_context` with readings for BTC in `data.readings`. Report the `verdict` and `headline`, the price and nearest levels, how many readings came back, any marked `stale_min`, and what `unavailable` lists, grouped by reason. Only then report that context is ready. Installation and OAuth alone do not prove usable context.
+5. Require a successful `context.v4` response from `get_asset_context` with readings for BTC in `data.readings`. Report the `verdict` and `headline`, the price and nearest levels, how many readings came back, any marked `stale_min`, and what `unavailable` names. Only then report that context is ready. Installation and OAuth alone do not prove usable context.
 
 ## Recovery
 
