@@ -43,14 +43,14 @@ Require `schema_version: context.v4` and the `tool` you called. Any other schema
 | `headline` | One templated sentence naming the readings behind the verdict |
 | `listing_venue` | The venue the positioning and liquidity readings describe, when present |
 | `data` | The tool's own content |
-| `unavailable` | Readings that could not be computed, each with a `reason` and, when it applies to one market, a `symbol` |
+| `unavailable` | What you asked for or rely on that could not be measured: reading names, a `symbol` when it applies to one market, and a `reason` only when changing the request can fix it |
 | `next` | At most one suggested call, only when the verdict is `unusual`. A suggestion, not an instruction; each call costs a request |
 
 Every reading, in every tool, has the same shape: `value` at human scale (2.1 means 2.1%; a word for category readings such as trend), `unit` in words, `percentile` against the market's own history, `state` (`extreme_low` ≤5, `low` 6–25, `normal` 26–74, `high` 75–94, `extreme_high` ≥95) and a one-sentence `observation`. `window_d` appears when the percentile rests on short history; `stale_min` appears when the data is older than its normal freshness. The sign of `value` carries direction. Readings with no venue prefix are measured on Hyperliquid.
 
 `get_asset_context` takes `symbols` (always a list, one to ten) and `detail`: `summary` (default) returns only readings at an extreme, changed categories, set flags, `return_24h` and the nearest levels, with a per-symbol count in `data.not_shown`; `full` returns every reading, every level and matched posts. Its `data` holds `readings`, `drivers`, `changes` and `levels`, keyed by symbol.
 
-An `observation` states what a reading is, never what it means for price; keep it distinct from your interpretation. A percentile describes the market's own history, not a forecast. An entry in `unavailable` is missing, not zero, neutral or no risk; `insufficient_history` and `no_data` are normal and are not issues to report. A reading with `stale_min` is not current; say so.
+An `observation` states what a reading is, never what it means for price; keep it distinct from your interpretation. A percentile describes the market's own history, not a forecast. An entry in `unavailable` is missing, not zero, neutral or no risk, and is not an issue to report. When it carries a `reason` (`insufficient_history` or `out_of_range`), a shorter horizon, another interval or a smaller size can be answered. A reading with `stale_min` is not current; say so.
 
 ## Failures
 
